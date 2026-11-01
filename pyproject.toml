@@ -3,7 +3,9 @@ name = "nomicronix"
 version = "0.1.0"
 description = "Nomicronix: personal AI crypto trading agent"
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    "ccxt>=4.0",
+]
 
 [dependency-groups]
 dev = [
@@ -36,3 +38,7 @@ select = ["E", "F", "I", "B", "UP"]
 [tool.mypy]
 strict = true
 mypy_path = "src"
+
+[[tool.mypy.overrides]]
+module = "ccxt.*"
+ignore_missing_imports = true
