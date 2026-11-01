@@ -368,3 +368,49 @@ def test_run_backfill_reports_a_series_that_runs_out_of_retries() -> None:
 
     assert summary.failures == [SeriesFailure("BTC/USDT", "1h", "429")]
     assert summary.stored == {("ETH/USDT", "1h"): 10}
+
+
+# --- spec success criterion 1, at full scale ------------------------------------------------
+
+
+def test_twelve_months_of_hourly_candles_backfill_with_no_gaps() -> None:
+    count = 24 * 365
+    now = START + count * HOUR_MS
+    adapter = FakeExchangeAdapter(make_candles(START, count + 1))  # the extra one is still open
+    store = SqliteStore(":memory:", "fake", now_ms=lambda: now)
+    config = BackfillConfig(limit=1000, sleep=lambda _: None, now_ms=lambda: now)
+
+    summary = run_backfill(adapter, store, ["BTC/USDT"], ["1h"], START, config=config)
+
+    assert summary.failures == []
+    assert summary.stored == {("BTC/USDT", "1h"): count}
+    assert store.find_gaps("BTC/USDT", "1h", START, START + count * HOUR_MS) == []
+    assert len(adapter.calls) == 9  # 1000 candles per request
+
+
+# --- safety: never loop forever ---------------------------------------------------------------
+
+
+class StuckAdapter:
+    """A misbehaving exchange that keeps answering with an old candle, whatever is asked."""
+
+    name = "fake"
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def fetch_candles(
+        self, symbol: str, timeframe: str, since_ms: int, limit: int
+    ) -> list[Candle]:
+        self.calls += 1
+        if self.calls > 3:
+            raise AssertionError("backfill kept asking: no progress guard")
+        return [make_candle(START)]
+
+
+def test_backfill_stops_when_the_exchange_makes_no_progress() -> None:
+    adapter = StuckAdapter()
+
+    backfill_range(adapter, make_store(), "BTC/USDT", "1h", t(100), config=make_config())
+
+    assert adapter.calls == 1

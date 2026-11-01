@@ -204,3 +204,22 @@ def test_live_command_stores_new_candles_and_exits_zero_when_stopped(tmp_path: P
     stored = open_store(db).get_candles("BTC/USDT", "1h", 0, JAN_1_2025_MS + 1000 * HOUR_MS)
     assert code == 0
     assert [(c.open_time_ms - JAN_1_2025_MS) // HOUR_MS for c in stored] == [4, 5]
+
+
+def test_live_command_exits_cleanly_on_ctrl_c(tmp_path: Path) -> None:
+    clock = Clock(JAN_1_2025_MS + 5 * HOUR_MS + 10_000)
+
+    def ctrl_c() -> bool:
+        raise KeyboardInterrupt
+
+    code = main(
+        [
+            "live", "--exchange", "fake", "--symbols", "BTC/USDT", "--timeframes", "1h",
+            "--db", str(tmp_path / "market.sqlite"),
+        ],
+        adapter=FakeExchangeAdapter([], clock=clock),
+        config=BackfillConfig(sleep=clock.sleep, now_ms=clock),
+        should_stop=ctrl_c,
+    )
+
+    assert code == 0
