@@ -7,7 +7,13 @@ from nomicronix.market_data.__main__ import main, parse_since
 from nomicronix.market_data.backfill import BackfillConfig
 from nomicronix.market_data.models import Candle
 from nomicronix.market_data.store import SqliteStore
-from tests.market_data.fakes import JAN_1_2025_MS, FakeExchangeAdapter, make_candles
+from tests.market_data.fakes import (
+    JAN_1_2025_MS,
+    Clock,
+    FakeExchangeAdapter,
+    make_candles,
+    stop_after,
+)
 
 HOUR_MS = 3_600_000
 NOW_MS = JAN_1_2025_MS + 50 * HOUR_MS
@@ -175,3 +181,26 @@ def test_verify_command_without_refill_never_calls_the_exchange(tmp_path: Path) 
     main(verify_args(db), adapter=adapter, config=make_config())
 
     assert adapter.calls == []
+
+
+# --- live command ---------------------------------------------------------------------------
+
+
+def test_live_command_stores_new_candles_and_exits_zero_when_stopped(tmp_path: Path) -> None:
+    db = tmp_path / "market.sqlite"
+    clock = Clock(JAN_1_2025_MS + 5 * HOUR_MS + 10_000)
+    adapter = FakeExchangeAdapter(make_candles(JAN_1_2025_MS, 30), clock=clock)
+
+    code = main(
+        [
+            "live", "--exchange", "fake", "--symbols", "BTC/USDT", "--timeframes", "1h",
+            "--db", str(db),
+        ],
+        adapter=adapter,
+        config=BackfillConfig(sleep=clock.sleep, now_ms=clock),
+        should_stop=stop_after(2),
+    )
+
+    stored = open_store(db).get_candles("BTC/USDT", "1h", 0, JAN_1_2025_MS + 1000 * HOUR_MS)
+    assert code == 0
+    assert [(c.open_time_ms - JAN_1_2025_MS) // HOUR_MS for c in stored] == [4, 5]
