@@ -80,9 +80,9 @@ Detailed acceptance criteria and verification steps are in `tasks/todo.md`.
 - [ ] Tests, lint and types pass; real-exchange contract test passes once
 
 ### Phase 2: Backfill
-- [ ] T5: Backfill one symbol and timeframe end to end (CLI)
-- [ ] T6: Resumable, multi-symbol, multi-timeframe backfill
-- [ ] T7: `verify` command
+- [x] T5: Backfill one symbol and timeframe end to end (CLI)
+- [x] T6: Resumable, multi-symbol, multi-timeframe backfill
+- [x] T7: `verify` command
 
 ### Checkpoint: Backfill
 - [ ] Spec success criteria 1 to 4 met

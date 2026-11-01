@@ -2,7 +2,7 @@
 
 Plan: `tasks/plan.md` · Spec: `SPEC-market-data.md`
 
-**Progress:** T1 to T4 implemented and committed. Foundation checkpoint is waiting on your review.
+**Progress:** T1 to T7 implemented and committed. Backfill checkpoint is waiting on your review.
 Items marked _not verified_ need `uv sync`, `ruff`, `mypy` or the real exchange, none of which
 were available in the build sandbox (no network). Please run them locally.
 
@@ -126,14 +126,14 @@ Test command used below (offline): `uv run pytest tests/market_data -m "not netw
 **Description:** First complete slice: a CLI command downloads history for one symbol and timeframe, paginated, and stores it.
 
 **Acceptance criteria:**
-- [ ] `backfill --symbols BTC/USDT --timeframes 1h --since <date>` fills the store up to the last closed candle
-- [ ] Respects rate limits and retries with backoff on rate-limit errors
-- [ ] Running it twice yields identical row counts (idempotent)
+- [x] `backfill --symbols BTC/USDT --timeframes 1h --since <date>` fills the store up to the last closed candle
+- [x] Respects rate limits and retries with backoff on rate-limit errors
+- [x] Running it twice yields identical row counts (idempotent)
 
 **Verification:**
-- [ ] Tests pass: `uv run pytest tests/market_data/test_backfill.py -m "not network"`
-- [ ] Manual check: run a real backfill for a short range and open the database
-- [ ] Types and lint clean
+- [x] Tests pass: `uv run pytest tests/market_data/test_backfill.py -m "not network"`
+- [ ] Manual check: run a real backfill for a short range and open the database _(not verified in sandbox: needs network or dev tools; run on your machine)_
+- [ ] Types and lint clean _(not verified in sandbox: needs network or dev tools; run on your machine)_
 
 **Dependencies:** Tasks 2, 3
 
@@ -151,14 +151,14 @@ Test command used below (offline): `uv run pytest tests/market_data -m "not netw
 **Description:** Widen the backfill to comma-separated symbols and timeframes and make it resume after interruption.
 
 **Acceptance criteria:**
-- [ ] Interrupted backfill restarts without re-downloading ranges already stored
-- [ ] Multiple symbols and timeframes processed in one command, one failure does not abort the rest
-- [ ] Failures are logged with symbol and timeframe and reflected in the exit code
+- [x] Interrupted backfill restarts without re-downloading ranges already stored
+- [x] Multiple symbols and timeframes processed in one command, one failure does not abort the rest
+- [x] Failures are logged with symbol and timeframe and reflected in the exit code
 
 **Verification:**
-- [ ] Tests pass: `uv run pytest tests/market_data/test_backfill.py`
-- [ ] Manual check: Ctrl-C a real backfill midway, rerun, confirm it resumes
-- [ ] Types and lint clean
+- [x] Tests pass: `uv run pytest tests/market_data/test_backfill.py`
+- [ ] Manual check: Ctrl-C a real backfill midway, rerun, confirm it resumes _(not verified in sandbox: needs network or dev tools; run on your machine)_
+- [ ] Types and lint clean _(not verified in sandbox: needs network or dev tools; run on your machine)_
 
 **Dependencies:** Task 5
 
@@ -176,14 +176,14 @@ Test command used below (offline): `uv run pytest tests/market_data -m "not netw
 **Description:** CLI command that reports gaps, duplicates and coverage for a symbol and timeframe.
 
 **Acceptance criteria:**
-- [ ] `verify` prints first and last candle, row count, and any gap ranges
-- [ ] Exits non-zero when gaps are found, zero otherwise
-- [ ] Reports unfillable gaps (exchange returned nothing) separately from fixable ones
+- [x] `verify` prints first and last candle, row count, and any gap ranges
+- [x] Exits non-zero when gaps are found, zero otherwise
+- [x] Reports unfillable gaps (exchange returned nothing) separately from fixable ones
 
 **Verification:**
-- [ ] Tests pass: `uv run pytest tests/market_data -m "not network"`
-- [ ] Manual check: delete a few rows by hand and confirm `verify` finds them
-- [ ] Types and lint clean
+- [x] Tests pass: `uv run pytest tests/market_data -m "not network"`
+- [x] Manual check: delete a few rows by hand and confirm `verify` finds them
+- [ ] Types and lint clean _(not verified in sandbox: needs network or dev tools; run on your machine)_
 
 **Dependencies:** Tasks 4, 6
 
@@ -197,7 +197,7 @@ Test command used below (offline): `uv run pytest tests/market_data -m "not netw
 ---
 
 ## Checkpoint: Backfill (after Tasks 5 to 7)
-- [ ] Spec success criteria 1 to 4 met on real data (12 months of `BTC/USDT 1h`, zero gaps)
+- [ ] Spec success criteria 1 to 4 met on real data (12 months of `BTC/USDT 1h`, zero gaps) _(replayed at full scale against the fake exchange: 8760 candles, 9 requests, 0 gaps, rerun identical, resume from hour 4000. Still needs a run against the real exchange.)_
 - [ ] All offline tests, lint and types pass
 - [ ] Review with human before proceeding
 
