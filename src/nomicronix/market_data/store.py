@@ -10,7 +10,7 @@ from collections.abc import Callable, Iterable
 from decimal import Decimal
 from pathlib import Path
 
-from nomicronix.market_data.models import Candle
+from nomicronix.market_data.models import Candle, Timeframe
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS candles (
@@ -119,6 +119,51 @@ class SqliteStore:
             (self._exchange, symbol, timeframe),
         ).fetchone()
         return None if row is None else _to_candle(symbol, timeframe, row)
+
+    def find_gaps(
+        self, symbol: str, timeframe: str, start_ms: int, end_ms: int
+    ) -> list[tuple[int, int]]:
+        """Missing-candle ranges within [start_ms, end_ms). See find_gaps_in_range."""
+        cursor = self._conn.execute(
+            "SELECT open_time_ms FROM candles"
+            " WHERE exchange = ? AND symbol = ? AND timeframe = ?"
+            " AND open_time_ms >= ? AND open_time_ms < ?"
+            " ORDER BY open_time_ms",
+            (self._exchange, symbol, timeframe, start_ms, end_ms),
+        )
+        return find_gaps_in_range(
+            [row[0] for row in cursor], Timeframe(timeframe).ms, start_ms, end_ms
+        )
+
+
+def find_gaps(open_times_ms: list[int], step_ms: int) -> list[tuple[int, int]]:
+    """Missing-candle ranges inside a sorted series of candle open times.
+
+    Each range is (first_missing_open_ms, last_missing_open_ms), both inclusive.
+    """
+    gaps: list[tuple[int, int]] = []
+    for prev, curr in zip(open_times_ms, open_times_ms[1:], strict=False):
+        if curr - prev > step_ms:
+            gaps.append((prev + step_ms, curr - step_ms))
+    return gaps
+
+
+def find_gaps_in_range(
+    open_times_ms: list[int], step_ms: int, start_ms: int, end_ms: int
+) -> list[tuple[int, int]]:
+    """Missing-candle ranges for the candle slots in [start_ms, end_ms).
+
+    Candle slots sit on multiples of step_ms (UTC epoch grid). An unaligned start is
+    rounded up to the next slot. Input may be unsorted and contain duplicates or
+    times outside the range. Same range format as find_gaps.
+    """
+    first = -(-start_ms // step_ms) * step_ms  # first slot >= start_ms
+    last = (end_ms - 1) // step_ms * step_ms  # last slot < end_ms
+    if first > last:
+        return []
+    inside = sorted({t for t in open_times_ms if first <= t <= last})
+    # Sentinels one slot outside the range turn gaps at either edge into inner gaps.
+    return find_gaps([first - step_ms, *inside, last + step_ms], step_ms)
 
 
 def _to_candle(symbol: str, timeframe: str, row: tuple[int, str, str, str, str, str]) -> Candle:

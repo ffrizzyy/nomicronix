@@ -17,7 +17,9 @@ HOUR_MS = 3_600_000
 class StubCcxtClient:
     """Stands in for a ccxt exchange object: records calls, returns rows or raises."""
 
-    def __init__(self, rows: list[list[float]] | None = None, error: Exception | None = None):
+    def __init__(
+        self, rows: list[list[float]] | None = None, error: Exception | None = None
+    ) -> None:
         self.rows = rows or []
         self.error = error
         self.calls: list[tuple[str, str, int | None, int | None]] = []
