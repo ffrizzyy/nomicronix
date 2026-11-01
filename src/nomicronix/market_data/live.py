@@ -12,7 +12,7 @@ from nomicronix.market_data.backfill import (
     SeriesFailure,
     backfill_range,
 )
-from nomicronix.market_data.models import Timeframe
+from nomicronix.market_data.models import Candle, Timeframe, is_stale
 from nomicronix.market_data.store import SqliteStore
 
 logger = logging.getLogger(__name__)
@@ -58,6 +58,32 @@ def _is_behind(store: SqliteStore, symbol: str, timeframe: str, now_ms: int) -> 
     return latest is None or latest.open_time_ms < expected_open_ms
 
 
+class StalenessMonitor:
+    """Logs when a series goes stale and when it recovers, once per change, not per check."""
+
+    def __init__(self) -> None:
+        self._stale: set[tuple[str, str]] = set()
+
+    def check(self, symbol: str, timeframe: str, latest: Candle | None, now_ms: int) -> None:
+        key = (symbol, timeframe)
+        stale = is_stale(latest, now_ms)
+        if stale and key not in self._stale:
+            self._stale.add(key)
+            if latest is None:
+                logger.error("STALE_DATA %s %s: no candles stored", symbol, timeframe)
+            else:
+                minutes = (now_ms - latest.close_time_ms) / 60_000
+                logger.error(
+                    "STALE_DATA %s %s: latest candle closed %.0f minutes ago",
+                    symbol,
+                    timeframe,
+                    minutes,
+                )
+        elif not stale and key in self._stale:
+            self._stale.discard(key)
+            logger.info("DATA_RECOVERED %s %s: new candles are arriving again", symbol, timeframe)
+
+
 @dataclass(frozen=True)
 class TickResult:
     behind: list[tuple[str, str]]  # series whose latest closed candle is not stored yet
@@ -69,6 +95,7 @@ def run_tick(
     store: SqliteStore,
     series: Sequence[tuple[str, str]],
     config: LiveConfig = DEFAULT_LIVE_CONFIG,
+    monitor: StalenessMonitor | None = None,
 ) -> TickResult:
     """Update every series once. Exchange failures are recorded, never raised.
 
@@ -84,6 +111,10 @@ def run_tick(
             logger.error("%s %s: update failed: %s", symbol, timeframe, exc)
             failures.append(SeriesFailure(symbol, timeframe, str(exc)))
     now_ms = config.backfill.now_ms()
+    if monitor is not None:
+        for symbol, timeframe in series:
+            latest = store.latest_candle(symbol, timeframe)
+            monitor.check(symbol, timeframe, latest, now_ms)
     behind = [(s, tf) for s, tf in series if _is_behind(store, s, tf, now_ms)]
     return TickResult(behind, failures)
 
@@ -114,7 +145,8 @@ def run_live(
 ) -> None:
     """Poll forever (until `should_stop`): once per candle close, sooner when behind."""
     series = list(product(symbols, timeframes))
+    monitor = StalenessMonitor()
     while not should_stop():
-        result = run_tick(adapter, store, series, config)
+        result = run_tick(adapter, store, series, config, monitor)
         any_behind = bool(result.behind or result.failures)
         config.backfill.sleep(_seconds_until_next_poll(series, any_behind, config))

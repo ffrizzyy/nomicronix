@@ -3,7 +3,7 @@ from decimal import Decimal
 
 import pytest
 
-from nomicronix.market_data.models import Candle, Timeframe
+from nomicronix.market_data.models import Candle, Timeframe, is_stale
 
 
 def make_candle() -> Candle:
@@ -59,3 +59,28 @@ def test_candle_close_time_is_open_time_plus_one_timeframe() -> None:
     candle = make_candle()
 
     assert candle.close_time_ms == candle.open_time_ms + 3_600_000
+
+
+# --- is_stale: no new candle for more than 2x the timeframe, measured from the last close ----
+
+
+def test_a_series_is_not_stale_right_after_its_latest_candle_closes() -> None:
+    candle = make_candle()  # 1h candle
+
+    assert not is_stale(candle, candle.close_time_ms + 1_000)
+
+
+def test_a_series_is_not_stale_at_exactly_two_timeframes_after_the_last_close() -> None:
+    candle = make_candle()
+
+    assert not is_stale(candle, candle.close_time_ms + 2 * 3_600_000)
+
+
+def test_a_series_is_stale_just_past_two_timeframes_after_the_last_close() -> None:
+    candle = make_candle()
+
+    assert is_stale(candle, candle.close_time_ms + 2 * 3_600_000 + 1)
+
+
+def test_an_empty_series_is_stale() -> None:
+    assert is_stale(None, 1_735_689_600_000)

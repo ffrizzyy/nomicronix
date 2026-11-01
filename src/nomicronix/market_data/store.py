@@ -48,6 +48,9 @@ class MarketDataStore(Protocol):
 
     Results are ascending by open time, de-duplicated, closed candles only.
     Ranges are half-open: start_ms <= open_time_ms < end_ms.
+
+    Freshness: before trusting prices, check `is_stale(latest_candle(...), now_ms)` from
+    nomicronix.market_data.models. The live updater logs STALE_DATA by the same rule.
     """
 
     def get_candles(

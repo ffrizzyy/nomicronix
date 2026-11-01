@@ -43,3 +43,18 @@ class Candle:
     def close_time_ms(self) -> int:
         """When this candle closes. Raises ValueError for an unsupported timeframe."""
         return self.open_time_ms + Timeframe(self.timeframe).ms
+
+
+STALE_AFTER_TIMEFRAMES = 2
+
+
+def is_stale(latest: Candle | None, now_ms: int) -> bool:
+    """True if no new candle has arrived for more than 2x the timeframe.
+
+    The age is measured from the close of the latest stored candle. An empty series is
+    stale. Consumers should apply this to `store.latest_candle(...)` before trusting prices.
+    """
+    if latest is None:
+        return True
+    age_ms = now_ms - latest.close_time_ms
+    return age_ms > STALE_AFTER_TIMEFRAMES * Timeframe(latest.timeframe).ms

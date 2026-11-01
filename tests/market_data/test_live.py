@@ -1,14 +1,23 @@
+import logging
+
 import pytest
 
 from nomicronix.market_data.adapter import AdapterError, NetworkError
 from nomicronix.market_data.backfill import BackfillConfig, SeriesFailure
-from nomicronix.market_data.live import LiveConfig, run_live, run_tick, update_series
-from nomicronix.market_data.models import Candle
+from nomicronix.market_data.live import (
+    LiveConfig,
+    StalenessMonitor,
+    run_live,
+    run_tick,
+    update_series,
+)
+from nomicronix.market_data.models import Candle, Timeframe
 from nomicronix.market_data.store import SqliteStore
 from tests.market_data.fakes import (
     JAN_1_2025_MS,
     Clock,
     FakeExchangeAdapter,
+    make_candle,
     make_candles,
     stop_after,
 )
@@ -247,3 +256,154 @@ def test_unexpected_errors_still_propagate() -> None:
 
     with pytest.raises(RuntimeError):
         run_tick(adapter, make_store(clock), [("BTC/USDT", "1h")], make_config(clock))
+
+
+# --- staleness ------------------------------------------------------------------------------
+
+
+def messages(caplog: pytest.LogCaptureFixture, marker: str) -> list[logging.LogRecord]:
+    return [r for r in caplog.records if marker in r.getMessage()]
+
+
+def test_stale_data_is_logged_at_error_level_with_symbol_and_timeframe(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    latest = make_candle(t(4))  # closed at t(5)
+    monitor = StalenessMonitor()
+
+    with caplog.at_level(logging.INFO):
+        monitor.check("BTC/USDT", "1h", latest, t(5) + 2 * HOUR_MS + 1)
+
+    (record,) = messages(caplog, "STALE_DATA")
+    assert record.levelno == logging.ERROR
+    assert "BTC/USDT" in record.getMessage() and "1h" in record.getMessage()
+
+
+def test_nothing_is_logged_while_data_is_fresh(caplog: pytest.LogCaptureFixture) -> None:
+    latest = make_candle(t(4))
+    monitor = StalenessMonitor()
+
+    with caplog.at_level(logging.INFO):
+        monitor.check("BTC/USDT", "1h", latest, t(5) + 10_000)
+        monitor.check("BTC/USDT", "1h", latest, t(5) + 2 * HOUR_MS)  # exactly 2x: still fine
+
+    assert caplog.records == []
+
+
+def test_an_empty_series_is_reported_stale(caplog: pytest.LogCaptureFixture) -> None:
+    with caplog.at_level(logging.INFO):
+        StalenessMonitor().check("BTC/USDT", "1h", None, t(5))
+
+    (record,) = messages(caplog, "STALE_DATA")
+    assert "no candles" in record.getMessage()
+
+
+def test_staleness_is_logged_once_not_on_every_check(caplog: pytest.LogCaptureFixture) -> None:
+    latest = make_candle(t(4))
+    monitor = StalenessMonitor()
+
+    with caplog.at_level(logging.INFO):
+        for minutes in (0, 1, 2, 3):
+            monitor.check("BTC/USDT", "1h", latest, t(8) + minutes * 60_000)
+
+    assert len(messages(caplog, "STALE_DATA")) == 1
+
+
+def test_recovery_is_logged_when_fresh_data_resumes(caplog: pytest.LogCaptureFixture) -> None:
+    monitor = StalenessMonitor()
+
+    with caplog.at_level(logging.INFO):
+        monitor.check("BTC/USDT", "1h", make_candle(t(4)), t(8))
+        monitor.check("BTC/USDT", "1h", make_candle(t(7)), t(8) + 30_000)
+        monitor.check("BTC/USDT", "1h", make_candle(t(7)), t(8) + 60_000)
+
+    (record,) = messages(caplog, "DATA_RECOVERED")
+    assert record.levelno == logging.INFO
+    assert "BTC/USDT" in record.getMessage()
+
+
+def test_each_series_is_tracked_separately(caplog: pytest.LogCaptureFixture) -> None:
+    monitor = StalenessMonitor()
+
+    with caplog.at_level(logging.INFO):
+        monitor.check("BTC/USDT", "1h", make_candle(t(4)), t(8))
+        monitor.check("ETH/USDT", "1h", make_candle(t(7)), t(8))
+
+    stale = messages(caplog, "STALE_DATA")
+    assert len(stale) == 1 and "BTC/USDT" in stale[0].getMessage()
+
+
+def test_the_live_loop_logs_stale_data_during_an_outage_and_recovery_after_it(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    clock = Clock(t(8) + 5_000)
+    adapter = FakeExchangeAdapter(make_candles(START, 30), clock=clock)
+    adapter.fail_next(NetworkError("exchange unreachable"))
+    store = make_store(clock)
+    store.upsert_candles(make_candles(START, 5))  # hours 0..4: three hours behind
+
+    with caplog.at_level(logging.INFO):
+        run_live(
+            adapter, store, ["BTC/USDT"], ["1h"],
+            config=make_config(clock, max_retries=0), should_stop=stop_after(2),
+        )
+
+    events = [
+        r.getMessage().split()[0]
+        for r in caplog.records
+        if "STALE_DATA" in r.getMessage() or "DATA_RECOVERED" in r.getMessage()
+    ]
+    assert events == ["STALE_DATA", "DATA_RECOVERED"]
+
+
+# --- end to end: a whole day with an outage in the middle -----------------------------------
+
+
+class OutageAdapter(FakeExchangeAdapter):
+    """Exchange that is unreachable between two moments in (fake) time."""
+
+    def __init__(
+        self, candles: list[Candle], clock: Clock, outage_from_ms: int, outage_to_ms: int
+    ) -> None:
+        super().__init__(candles, clock=clock)
+        self._time = clock
+        self._outage = (outage_from_ms, outage_to_ms)
+
+    def fetch_candles(
+        self, symbol: str, timeframe: str, since_ms: int, limit: int
+    ) -> list[Candle]:
+        if self._outage[0] <= self._time() < self._outage[1]:
+            raise NetworkError("exchange unreachable")
+        return super().fetch_candles(symbol, timeframe, since_ms, limit)
+
+
+def test_a_three_hour_outage_in_a_simulated_day_leaves_no_gaps_and_is_reported(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    clock = Clock(t(5) + 5_000)
+    symbols, timeframes = ["BTC/USDT", "ETH/USDT"], ["1h", "15m"]
+    data = [
+        c
+        for symbol in symbols
+        for tf, count in (("1h", 30), ("15m", 120))
+        for c in make_candles(START, count, symbol=symbol, timeframe=tf)
+    ]
+    adapter = OutageAdapter(data, clock, outage_from_ms=t(10), outage_to_ms=t(13))
+    store = make_store(clock)
+
+    with caplog.at_level(logging.INFO):
+        run_live(
+            adapter, store, symbols, timeframes,
+            config=make_config(clock), should_stop=lambda: clock() >= t(24),
+        )
+
+    for symbol in symbols:
+        for tf in timeframes:
+            step = Timeframe(tf).ms
+            first = store.earliest_candle(symbol, tf)
+            last = store.latest_candle(symbol, tf)
+            assert first is not None and last is not None
+            assert store.find_gaps(symbol, tf, first.open_time_ms, last.open_time_ms + step) == []
+            assert last.close_time_ms > t(24) - 2 * step  # caught up to the end of the day
+    assert len(messages(caplog, "STALE_DATA")) == 4  # every series went stale once
+    assert len(messages(caplog, "DATA_RECOVERED")) == 4  # and recovered once
