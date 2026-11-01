@@ -5,6 +5,7 @@ import pytest
 from nomicronix.market_data.adapter import AdapterError
 from nomicronix.market_data.__main__ import main, parse_since
 from nomicronix.market_data.backfill import BackfillConfig
+from nomicronix.market_data.models import Candle
 from nomicronix.market_data.store import SqliteStore
 from tests.market_data.fakes import JAN_1_2025_MS, FakeExchangeAdapter, make_candles
 
@@ -113,3 +114,64 @@ def test_backfill_command_rejects_an_unsupported_timeframe(tmp_path: Path) -> No
             adapter=FakeExchangeAdapter([]),
             config=make_config(),
         )
+
+
+# --- verify command -------------------------------------------------------------------------
+
+
+def seed(db: Path, candles: list[Candle]) -> None:
+    store = open_store(db)
+    store.upsert_candles(candles)
+    store.close()
+
+
+def verify_args(db: Path, *extra: str) -> list[str]:
+    return [
+        "verify", "--exchange", "fake", "--symbols", "BTC/USDT", "--timeframes", "1h",
+        "--db", str(db), *extra,
+    ]
+
+
+def test_verify_command_exits_zero_for_a_clean_series(tmp_path: Path) -> None:
+    db = tmp_path / "market.sqlite"
+    seed(db, make_candles(JAN_1_2025_MS, 10))
+
+    assert main(verify_args(db)) == 0
+
+
+def test_verify_command_exits_non_zero_when_gaps_are_found(tmp_path: Path) -> None:
+    db = tmp_path / "market.sqlite"
+    candles = make_candles(JAN_1_2025_MS, 10)
+    seed(db, [c for i, c in enumerate(candles) if i not in (4, 5)])
+
+    assert main(verify_args(db)) == 1
+
+
+def test_verify_command_exits_non_zero_when_nothing_is_stored(tmp_path: Path) -> None:
+    assert main(verify_args(tmp_path / "market.sqlite")) == 1
+
+
+def test_verify_command_with_refill_repairs_gaps_and_exits_zero(tmp_path: Path) -> None:
+    db = tmp_path / "market.sqlite"
+    candles = make_candles(JAN_1_2025_MS, 10)
+    seed(db, [c for i, c in enumerate(candles) if i not in (4, 5)])
+
+    code = main(
+        verify_args(db, "--refill"),
+        adapter=FakeExchangeAdapter(candles),
+        config=make_config(),
+    )
+
+    assert code == 0
+    assert len(open_store(db).get_candles("BTC/USDT", "1h", 0, JAN_1_2025_MS + 100 * HOUR_MS)) == 10
+
+
+def test_verify_command_without_refill_never_calls_the_exchange(tmp_path: Path) -> None:
+    db = tmp_path / "market.sqlite"
+    candles = make_candles(JAN_1_2025_MS, 10)
+    seed(db, [c for i, c in enumerate(candles) if i not in (4, 5)])
+    adapter = FakeExchangeAdapter(candles)
+
+    main(verify_args(db), adapter=adapter, config=make_config())
+
+    assert adapter.calls == []
