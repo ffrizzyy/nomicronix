@@ -2,6 +2,10 @@
 
 Plan: `tasks/plan.md` · Spec: `SPEC-market-data.md`
 
+**Progress:** T1 to T4 implemented and committed. Foundation checkpoint is waiting on your review.
+Items marked _not verified_ need `uv sync`, `ruff`, `mypy` or the real exchange, none of which
+were available in the build sandbox (no network). Please run them locally.
+
 Test command used below (offline): `uv run pytest tests/market_data -m "not network"`
 
 ---
@@ -13,14 +17,14 @@ Test command used below (offline): `uv run pytest tests/market_data -m "not netw
 **Description:** Set up the Python project and the shared types every other task uses.
 
 **Acceptance criteria:**
-- [ ] `uv sync` installs cleanly; `ruff`, `mypy --strict`, `pytest` are configured in `pyproject.toml`
-- [ ] `Candle` is a frozen dataclass with `Decimal` OHLCV and `open_time_ms`
-- [ ] `Timeframe` helper converts `"15m"`, `"1h"` to milliseconds and rejects unknown values
+- [ ] `uv sync` installs cleanly; `ruff`, `mypy --strict`, `pytest` are configured in `pyproject.toml` _(not verified in sandbox: needs network or dev tools; run on your machine)_
+- [x] `Candle` is a frozen dataclass with `Decimal` OHLCV and `open_time_ms`
+- [x] `Timeframe` helper converts `"15m"`, `"1h"` to milliseconds and rejects unknown values
 
 **Verification:**
-- [ ] Tests pass: `uv run pytest tests/market_data -m "not network"`
-- [ ] Lint and types: `uv run ruff check src tests` and `uv run mypy src/nomicronix/market_data`
-- [ ] Manual check: `.gitignore` excludes `data/` and `.env`
+- [x] Tests pass: `uv run pytest tests/market_data -m "not network"`
+- [ ] Lint and types: `uv run ruff check src tests` and `uv run mypy src/nomicronix/market_data` _(not verified in sandbox: needs network or dev tools; run on your machine)_
+- [x] Manual check: `.gitignore` excludes `data/` and `.env`
 
 **Dependencies:** None
 
@@ -38,14 +42,14 @@ Test command used below (offline): `uv run pytest tests/market_data -m "not netw
 **Description:** Define the adapter interface, a deterministic fake for tests, and the real `ccxt` implementation using public endpoints. This is the highest-risk task (exchange reachability), so it runs first.
 
 **Acceptance criteria:**
-- [ ] `ExchangeAdapter.fetch_candles(symbol, timeframe, since_ms, limit)` returns `list[Candle]` sorted ascending
-- [ ] `FakeExchangeAdapter` can be scripted to return data, duplicates, rate-limit errors and disconnects
-- [ ] Real adapter returns data matching the `Candle` shape and never needs API keys
+- [x] `ExchangeAdapter.fetch_candles(symbol, timeframe, since_ms, limit)` returns `list[Candle]` sorted ascending
+- [x] `FakeExchangeAdapter` can be scripted to return data, duplicates, rate-limit errors and disconnects
+- [ ] Real adapter returns data matching the `Candle` shape and never needs API keys _(not verified in sandbox: needs network or dev tools; run on your machine)_
 
 **Verification:**
-- [ ] Offline tests pass: `uv run pytest tests/market_data -m "not network"`
+- [x] Offline tests pass: `uv run pytest tests/market_data -m "not network"`
 - [ ] Contract test passes against the real exchange: `uv run pytest tests/market_data -m network`
-- [ ] Manual check: if the contract test fails on reachability, stop and switch exchange before continuing
+- [ ] Manual check: if the contract test fails on reachability, stop and switch exchange before continuing _(not verified in sandbox: needs network or dev tools; run on your machine)_
 
 **Dependencies:** Task 1
 
@@ -64,14 +68,14 @@ Test command used below (offline): `uv run pytest tests/market_data -m "not netw
 **Description:** Persist candles idempotently and serve them through the `MarketDataStore` interface.
 
 **Acceptance criteria:**
-- [ ] Upsert on key `(exchange, symbol, timeframe, open_time_ms)`; writing the same candle twice leaves one row
-- [ ] `get_candles` returns sorted, de-duplicated results for a range; `latest_candle` returns the newest or `None`
-- [ ] Candles that are not yet closed are rejected at write time
+- [x] Upsert on key `(exchange, symbol, timeframe, open_time_ms)`; writing the same candle twice leaves one row
+- [x] `get_candles` returns sorted, de-duplicated results for a range; `latest_candle` returns the newest or `None`
+- [x] Candles that are not yet closed are rejected at write time
 
 **Verification:**
-- [ ] Tests pass: `uv run pytest tests/market_data/test_store.py`
-- [ ] Types: `uv run mypy src/nomicronix/market_data`
-- [ ] Manual check: inspect the created `.sqlite` file and confirm the schema and primary key
+- [x] Tests pass: `uv run pytest tests/market_data/test_store.py`
+- [ ] Types: `uv run mypy src/nomicronix/market_data` _(not verified in sandbox: needs network or dev tools; run on your machine)_
+- [x] Manual check: inspect the created `.sqlite` file and confirm the schema and primary key
 
 **Dependencies:** Task 1
 
@@ -88,14 +92,14 @@ Test command used below (offline): `uv run pytest tests/market_data -m "not netw
 **Description:** Add the pure `find_gaps` function and expose it through the store.
 
 **Acceptance criteria:**
-- [ ] `find_gaps` returns `(missing_from_ms, missing_to_ms)` ranges for any missing candles
-- [ ] No gaps reported for a contiguous series, including single-candle and empty series
-- [ ] Store method `find_gaps(symbol, timeframe, start_ms, end_ms)` also reports a gap at the start or end of the requested range
+- [x] `find_gaps` returns `(missing_from_ms, missing_to_ms)` ranges for any missing candles
+- [x] No gaps reported for a contiguous series, including single-candle and empty series
+- [x] Store method `find_gaps(symbol, timeframe, start_ms, end_ms)` also reports a gap at the start or end of the requested range
 
 **Verification:**
-- [ ] Tests pass: `uv run pytest tests/market_data/test_store.py -k gaps`
-- [ ] Lint: `uv run ruff check src tests`
-- [ ] Manual check: gaps match a hand-built example in the tests
+- [x] Tests pass: `uv run pytest tests/market_data/test_store.py -k gaps`
+- [ ] Lint: `uv run ruff check src tests` _(not verified in sandbox: needs network or dev tools; run on your machine)_
+- [x] Manual check: gaps match a hand-built example in the tests
 
 **Dependencies:** Task 3
 

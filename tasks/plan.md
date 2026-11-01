@@ -71,10 +71,10 @@ pyproject + models (T1)
 Detailed acceptance criteria and verification steps are in `tasks/todo.md`.
 
 ### Phase 1: Foundation
-- [ ] T1: Project scaffold, `Candle` model, `Timeframe` helpers
-- [ ] T2: `ExchangeAdapter` protocol, `FakeExchangeAdapter`, `ccxt` adapter
-- [ ] T3: SQLite store (upsert, `get_candles`, `latest_candle`)
-- [ ] T4: Gap detection (`find_gaps`)
+- [x] T1: Project scaffold, `Candle` model, `Timeframe` helpers
+- [x] T2: `ExchangeAdapter` protocol, `FakeExchangeAdapter`, `ccxt` adapter
+- [x] T3: SQLite store (upsert, `get_candles`, `latest_candle`)
+- [x] T4: Gap detection (`find_gaps`)
 
 ### Checkpoint: Foundation
 - [ ] Tests, lint and types pass; real-exchange contract test passes once
