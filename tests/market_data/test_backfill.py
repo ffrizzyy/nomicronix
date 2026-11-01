@@ -1,0 +1,198 @@
+import pytest
+
+from nomicronix.market_data.adapter import AdapterError, NetworkError, RateLimitError
+from nomicronix.market_data.backfill import BackfillConfig, backfill_range
+from nomicronix.market_data.store import SqliteStore
+from tests.market_data.fakes import JAN_1_2025_MS, FakeExchangeAdapter, make_candle, make_candles
+
+HOUR_MS = 3_600_000
+START = JAN_1_2025_MS
+NOW_MS = START + 250 * HOUR_MS  # candles 0..249 are closed, the candle at 250 is still open
+
+
+def t(hours: int) -> int:
+    return START + hours * HOUR_MS
+
+
+def make_store(now_ms: int = NOW_MS) -> SqliteStore:
+    return SqliteStore(":memory:", "fake", now_ms=lambda: now_ms)
+
+
+def make_config(
+    sleeps: list[float] | None = None,
+    *,
+    now_ms: int = NOW_MS,
+    limit: int = 100,
+    max_retries: int = 5,
+) -> BackfillConfig:
+    record = sleeps if sleeps is not None else []
+    return BackfillConfig(
+        limit=limit,
+        max_retries=max_retries,
+        base_delay_s=1.0,
+        max_delay_s=60.0,
+        sleep=record.append,
+        now_ms=lambda: now_ms,
+    )
+
+
+def stored_open_times(store: SqliteStore) -> list[int]:
+    return [c.open_time_ms for c in store.get_candles("BTC/USDT", "1h", 0, t(10_000))]
+
+
+# --- core behaviour -------------------------------------------------------------------------
+
+
+def test_backfill_fills_the_store_up_to_the_last_closed_candle_across_pages() -> None:
+    adapter = FakeExchangeAdapter(make_candles(START, 250))
+    store = make_store()
+
+    stored = backfill_range(adapter, store, "BTC/USDT", "1h", START, config=make_config())
+
+    assert stored == 250
+    assert stored_open_times(store) == [t(i) for i in range(250)]
+    assert store.find_gaps("BTC/USDT", "1h", t(0), t(250)) == []
+
+
+def test_backfill_pages_forward_from_the_last_candle_received() -> None:
+    adapter = FakeExchangeAdapter(make_candles(START, 250))
+
+    backfill_range(adapter, make_store(), "BTC/USDT", "1h", START, config=make_config(limit=100))
+
+    assert [since for (_, _, since, _) in adapter.calls] == [t(0), t(100), t(200)]
+
+
+def test_backfill_never_stores_the_candle_that_is_still_open() -> None:
+    candles = make_candles(START, 250) + [make_candle(t(250))]  # exchange also returns the open one
+    adapter = FakeExchangeAdapter(candles)
+    store = make_store()
+
+    backfill_range(adapter, store, "BTC/USDT", "1h", START, config=make_config())
+
+    latest = store.latest_candle("BTC/USDT", "1h")
+    assert latest is not None and latest.open_time_ms == t(249)
+
+
+def test_running_backfill_twice_gives_identical_rows() -> None:
+    adapter = FakeExchangeAdapter(make_candles(START, 250))
+    store = make_store()
+
+    backfill_range(adapter, store, "BTC/USDT", "1h", START, config=make_config())
+    first = store.get_candles("BTC/USDT", "1h", 0, t(10_000))
+    backfill_range(adapter, store, "BTC/USDT", "1h", START, config=make_config())
+
+    assert store.get_candles("BTC/USDT", "1h", 0, t(10_000)) == first
+
+
+def test_backfill_ignores_duplicate_rows_from_the_exchange() -> None:
+    adapter = FakeExchangeAdapter(make_candles(START, 10), duplicate_first_row=True)
+    store = make_store()
+
+    stored = backfill_range(adapter, store, "BTC/USDT", "1h", START, config=make_config())
+
+    assert stored == 10
+    assert len(stored_open_times(store)) == 10
+
+
+def test_backfill_rounds_an_unaligned_since_up_to_the_next_candle() -> None:
+    adapter = FakeExchangeAdapter(make_candles(START, 10))
+    store = make_store()
+
+    backfill_range(adapter, store, "BTC/USDT", "1h", START + 1, config=make_config())
+
+    assert stored_open_times(store) == [t(i) for i in range(1, 10)]
+
+
+def test_backfill_stops_when_the_exchange_has_nothing_more() -> None:
+    adapter = FakeExchangeAdapter(make_candles(START, 10))
+    store = make_store()
+
+    stored = backfill_range(adapter, store, "BTC/USDT", "1h", t(100), config=make_config())
+
+    assert stored == 0
+    assert len(adapter.calls) == 1
+
+
+def test_backfill_does_not_ask_the_exchange_for_a_candle_that_has_not_closed() -> None:
+    adapter = FakeExchangeAdapter(make_candles(START, 250))
+
+    stored = backfill_range(adapter, make_store(), "BTC/USDT", "1h", t(250), config=make_config())
+
+    assert stored == 0
+    assert adapter.calls == []
+
+
+def test_backfill_respects_an_upper_bound() -> None:
+    adapter = FakeExchangeAdapter(make_candles(START, 250))
+    store = make_store()
+
+    backfill_range(adapter, store, "BTC/USDT", "1h", t(10), until_ms=t(20), config=make_config())
+
+    assert stored_open_times(store) == [t(i) for i in range(10, 20)]
+
+
+# --- retries --------------------------------------------------------------------------------
+
+
+def test_backfill_retries_rate_limits_with_exponential_backoff() -> None:
+    adapter = FakeExchangeAdapter(make_candles(START, 10))
+    adapter.fail_next(RateLimitError("429"), times=3)
+    sleeps: list[float] = []
+    store = make_store()
+
+    stored = backfill_range(
+        adapter, store, "BTC/USDT", "1h", START, config=make_config(sleeps)
+    )
+
+    assert sleeps == [1.0, 2.0, 4.0]
+    assert stored == 10
+
+
+def test_backfill_retries_network_errors() -> None:
+    adapter = FakeExchangeAdapter(make_candles(START, 10))
+    adapter.fail_next(NetworkError("connection reset"))
+    sleeps: list[float] = []
+
+    stored = backfill_range(
+        adapter, make_store(), "BTC/USDT", "1h", START, config=make_config(sleeps)
+    )
+
+    assert sleeps == [1.0]
+    assert stored == 10
+
+
+def test_backoff_delay_is_capped() -> None:
+    adapter = FakeExchangeAdapter(make_candles(START, 10))
+    adapter.fail_next(RateLimitError("429"), times=8)
+    sleeps: list[float] = []
+
+    backfill_range(
+        adapter, make_store(), "BTC/USDT", "1h", START, config=make_config(sleeps, max_retries=8)
+    )
+
+    assert max(sleeps) == 60.0
+
+
+def test_backfill_gives_up_after_max_retries_and_raises() -> None:
+    adapter = FakeExchangeAdapter(make_candles(START, 10))
+    adapter.fail_next(RateLimitError("429"), times=10)
+    sleeps: list[float] = []
+
+    with pytest.raises(RateLimitError):
+        config = make_config(sleeps, max_retries=2)
+        backfill_range(adapter, make_store(), "BTC/USDT", "1h", START, config=config)
+
+    assert sleeps == [1.0, 2.0]
+    assert len(adapter.calls) == 3
+
+
+def test_backfill_does_not_retry_errors_that_are_not_transient() -> None:
+    adapter = FakeExchangeAdapter(make_candles(START, 10))
+    adapter.fail_next(AdapterError("unknown symbol"))
+    sleeps: list[float] = []
+
+    with pytest.raises(AdapterError):
+        backfill_range(adapter, make_store(), "BTC/USDT", "1h", START, config=make_config(sleeps))
+
+    assert sleeps == []
+    assert len(adapter.calls) == 1
