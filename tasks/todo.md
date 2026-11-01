@@ -48,7 +48,7 @@ Test command used below (offline): `uv run pytest tests/market_data -m "not netw
 
 **Verification:**
 - [x] Offline tests pass: `uv run pytest tests/market_data -m "not network"`
-- [ ] Contract test passes against the real exchange: `uv run pytest tests/market_data -m network`
+- [ ] Contract test passes against the real exchange: `uv run pytest tests/market_data -m network` _(not verified in sandbox: needs network or dev tools; run on your machine)_
 - [ ] Manual check: if the contract test fails on reachability, stop and switch exchange before continuing _(not verified in sandbox: needs network or dev tools; run on your machine)_
 
 **Dependencies:** Task 1
