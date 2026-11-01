@@ -93,7 +93,7 @@ Detailed acceptance criteria and verification steps are in `tasks/todo.md`.
 - [x] T10: Staleness detection
 
 ### Phase 4: Wrap-up
-- [ ] T11: Docs and final spec sweep
+- [x] T11: Docs and final spec sweep
 
 ### Checkpoint: Complete
 - [ ] All 7 success criteria met, ready for review

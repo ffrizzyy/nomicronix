@@ -2,7 +2,8 @@
 
 Plan: `tasks/plan.md` · Spec: `SPEC-market-data.md`
 
-**Progress:** T1 to T10 implemented and committed. Only T11 (docs and final sweep) remains.
+**Progress:** T1 to T11 implemented and committed (133 offline tests pass in the build sandbox).
+Outstanding: the local checks marked _not verified_, then flip `SPEC.md` to Done.
 Items marked _not verified_ need `uv sync`, `ruff`, `mypy` or the real exchange, none of which
 were available in the build sandbox (no network). Please run them locally.
 
@@ -284,14 +285,14 @@ Test command used below (offline): `uv run pytest tests/market_data -m "not netw
 **Description:** Document usage and exchange quirks, then check every success criterion against the code.
 
 **Acceptance criteria:**
-- [ ] `docs/market-data.md` explains each command with examples and known exchange quirks
-- [ ] Each of the 7 success criteria in the spec is linked to the test or manual check that proves it
-- [ ] Coverage at least 85% for `nomicronix.market_data`
+- [x] `docs/market-data.md` explains each command with examples and known exchange quirks
+- [x] Each of the 7 success criteria in the spec is linked to the test or manual check that proves it
+- [ ] Coverage at least 85% for `nomicronix.market_data` _(estimated 97.8% with Python's `trace` module, not `pytest-cov`; confirm on your machine)_
 
 **Verification:**
-- [ ] Full suite: `uv run pytest tests/market_data -m "not network" --cov=nomicronix.market_data --cov-fail-under=85`
-- [ ] Lint and types: `uv run ruff check src tests` and `uv run mypy src/nomicronix/market_data`
-- [ ] Manual check: update `SPEC.md` status for `market-data` to Done
+- [ ] Full suite: `uv run pytest tests/market_data -m "not network" --cov=nomicronix.market_data --cov-fail-under=85` _(not verified in sandbox: needs network or dev tools; run on your machine)_
+- [ ] Lint and types: `uv run ruff check src tests` and `uv run mypy src/nomicronix/market_data` _(not verified in sandbox: needs network or dev tools; run on your machine)_
+- [ ] Manual check: update `SPEC.md` status for `market-data` to Done _(set to "Built, pending your local checks" instead; flip to Done after they pass)_
 
 **Dependencies:** Tasks 9, 10
 
