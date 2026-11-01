@@ -9,6 +9,7 @@ import time
 from collections.abc import Callable, Iterable
 from decimal import Decimal
 from pathlib import Path
+from typing import Protocol
 
 from nomicronix.market_data.models import Candle, Timeframe
 
@@ -42,11 +43,29 @@ ON CONFLICT (exchange, symbol, timeframe, open_time_ms) DO UPDATE SET
 _SELECT_COLUMNS = "open_time_ms, open, high, low, close, volume"
 
 
+class MarketDataStore(Protocol):
+    """What consumer modules (backtesting, strategy-engine) depend on.
+
+    Results are ascending by open time, de-duplicated, closed candles only.
+    Ranges are half-open: start_ms <= open_time_ms < end_ms.
+    """
+
+    def get_candles(
+        self, symbol: str, timeframe: str, start_ms: int, end_ms: int
+    ) -> list[Candle]: ...
+
+    def latest_candle(self, symbol: str, timeframe: str) -> Candle | None: ...
+
+    def find_gaps(
+        self, symbol: str, timeframe: str, start_ms: int, end_ms: int
+    ) -> list[tuple[int, int]]: ...
+
+
 class OpenCandleError(ValueError):
     """A candle that has not closed yet was passed to the store."""
 
 
-def _utc_now_ms() -> int:
+def utc_now_ms() -> int:
     return time.time_ns() // 1_000_000
 
 
@@ -56,7 +75,7 @@ class SqliteStore:
         path: str | Path,
         exchange: str,
         *,
-        now_ms: Callable[[], int] = _utc_now_ms,
+        now_ms: Callable[[], int] = utc_now_ms,
     ) -> None:
         if str(path) != ":memory:":
             Path(path).parent.mkdir(parents=True, exist_ok=True)
@@ -116,6 +135,16 @@ class SqliteStore:
             f"SELECT {_SELECT_COLUMNS} FROM candles"
             " WHERE exchange = ? AND symbol = ? AND timeframe = ?"
             " ORDER BY open_time_ms DESC LIMIT 1",
+            (self._exchange, symbol, timeframe),
+        ).fetchone()
+        return None if row is None else _to_candle(symbol, timeframe, row)
+
+    def earliest_candle(self, symbol: str, timeframe: str) -> Candle | None:
+        """Oldest stored candle. Used by backfill to resume; not part of the consumer contract."""
+        row = self._conn.execute(
+            f"SELECT {_SELECT_COLUMNS} FROM candles"
+            " WHERE exchange = ? AND symbol = ? AND timeframe = ?"
+            " ORDER BY open_time_ms ASC LIMIT 1",
             (self._exchange, symbol, timeframe),
         ).fetchone()
         return None if row is None else _to_candle(symbol, timeframe, row)

@@ -5,6 +5,7 @@ import pytest
 
 from nomicronix.market_data.models import Candle
 from nomicronix.market_data.store import (
+    MarketDataStore,
     OpenCandleError,
     SqliteStore,
     find_gaps,
@@ -278,3 +279,31 @@ def test_store_find_gaps_only_looks_at_the_requested_series() -> None:
 
     assert store.find_gaps("BTC/USDT", "1h", t(0), t(10)) == [(t(0), t(9))]
     assert store.find_gaps("ETH/USDT", "1h", t(0), t(10)) == []
+
+
+# --- contract and earliest_candle -----------------------------------------------------------
+
+
+def test_sqlite_store_can_be_used_through_the_market_data_store_contract() -> None:
+    concrete = make_store()
+    concrete.upsert_candles(make_candles(JAN_1_2025_MS, 5))
+    store: MarketDataStore = concrete
+
+    assert len(store.get_candles("BTC/USDT", "1h", t(0), t(5))) == 5
+    assert store.latest_candle("BTC/USDT", "1h") is not None
+    assert store.find_gaps("BTC/USDT", "1h", t(0), t(5)) == []
+
+
+def test_earliest_candle_returns_the_oldest() -> None:
+    store = make_store()
+    candles = make_candles(JAN_1_2025_MS, 5)
+    store.upsert_candles(candles)
+
+    assert store.earliest_candle("BTC/USDT", "1h") == candles[0]
+
+
+def test_earliest_candle_is_none_when_nothing_is_stored_for_that_series() -> None:
+    store = make_store()
+    store.upsert_candles(make_candles(JAN_1_2025_MS, 3, symbol="ETH/USDT"))
+
+    assert store.earliest_candle("BTC/USDT", "1h") is None
