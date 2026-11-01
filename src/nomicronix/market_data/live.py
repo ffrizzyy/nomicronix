@@ -1,13 +1,21 @@
 """Keep the store current: poll shortly after each candle closes."""
 
+import logging
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from itertools import product
 
-from nomicronix.market_data.adapter import ExchangeAdapter
-from nomicronix.market_data.backfill import DEFAULT_CONFIG, BackfillConfig, backfill_range
+from nomicronix.market_data.adapter import AdapterError, ExchangeAdapter
+from nomicronix.market_data.backfill import (
+    DEFAULT_CONFIG,
+    BackfillConfig,
+    SeriesFailure,
+    backfill_range,
+)
 from nomicronix.market_data.models import Timeframe
 from nomicronix.market_data.store import SqliteStore
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -50,17 +58,34 @@ def _is_behind(store: SqliteStore, symbol: str, timeframe: str, now_ms: int) -> 
     return latest is None or latest.open_time_ms < expected_open_ms
 
 
+@dataclass(frozen=True)
+class TickResult:
+    behind: list[tuple[str, str]]  # series whose latest closed candle is not stored yet
+    failures: list[SeriesFailure]  # series whose update failed this tick
+
+
 def run_tick(
     adapter: ExchangeAdapter,
     store: SqliteStore,
     series: Sequence[tuple[str, str]],
     config: LiveConfig = DEFAULT_LIVE_CONFIG,
-) -> list[tuple[str, str]]:
-    """Update every series once. Returns the series that are still behind afterwards."""
+) -> TickResult:
+    """Update every series once. Exchange failures are recorded, never raised.
+
+    Transient errors are retried with backoff inside the update. A series that still
+    fails is reported and picked up again on the next tick, which resumes from the
+    latest stored candle. Errors that are not exchange errors (bugs) still propagate.
+    """
+    failures: list[SeriesFailure] = []
     for symbol, timeframe in series:
-        update_series(adapter, store, symbol, timeframe, config)
+        try:
+            update_series(adapter, store, symbol, timeframe, config)
+        except AdapterError as exc:
+            logger.error("%s %s: update failed: %s", symbol, timeframe, exc)
+            failures.append(SeriesFailure(symbol, timeframe, str(exc)))
     now_ms = config.backfill.now_ms()
-    return [(s, tf) for s, tf in series if _is_behind(store, s, tf, now_ms)]
+    behind = [(s, tf) for s, tf in series if _is_behind(store, s, tf, now_ms)]
+    return TickResult(behind, failures)
 
 
 def _seconds_until_next_poll(
@@ -90,5 +115,6 @@ def run_live(
     """Poll forever (until `should_stop`): once per candle close, sooner when behind."""
     series = list(product(symbols, timeframes))
     while not should_stop():
-        behind = run_tick(adapter, store, series, config)
-        config.backfill.sleep(_seconds_until_next_poll(series, bool(behind), config))
+        result = run_tick(adapter, store, series, config)
+        any_behind = bool(result.behind or result.failures)
+        config.backfill.sleep(_seconds_until_next_poll(series, any_behind, config))

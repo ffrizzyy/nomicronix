@@ -1,5 +1,8 @@
-from nomicronix.market_data.backfill import BackfillConfig
-from nomicronix.market_data.live import LiveConfig, run_live, update_series
+import pytest
+
+from nomicronix.market_data.adapter import AdapterError, NetworkError
+from nomicronix.market_data.backfill import BackfillConfig, SeriesFailure
+from nomicronix.market_data.live import LiveConfig, run_live, run_tick, update_series
 from nomicronix.market_data.models import Candle
 from nomicronix.market_data.store import SqliteStore
 from tests.market_data.fakes import (
@@ -160,3 +163,87 @@ def test_the_loop_retries_soon_when_the_exchange_has_not_published_the_candle_ye
 
     assert clock.sleeps[0] == 30.0  # did not wait a full hour
     assert hours_stored(store) == [4]
+
+
+# --- outages and restarts -------------------------------------------------------------------
+
+
+def test_a_short_outage_is_ridden_out_with_backoff_inside_the_tick() -> None:
+    clock = Clock(t(10) + 5_000)
+    adapter = FakeExchangeAdapter(make_candles(START, 30), clock=clock)
+    adapter.fail_next(NetworkError("connection reset"), times=2)
+    store = make_store(clock)
+    store.upsert_candles(make_candles(START, 9))  # hours 0..8
+
+    update_series(adapter, store, "BTC/USDT", "1h", make_config(clock))
+
+    assert clock.sleeps == [1.0, 2.0]
+    assert hours_stored(store)[-1] == 9
+
+
+def test_after_a_long_outage_the_next_tick_fills_every_missed_candle() -> None:
+    clock = Clock(t(12) + 5_000)  # nothing ran since hour 5
+    adapter = FakeExchangeAdapter(make_candles(START, 30), clock=clock)
+    store = make_store(clock)
+    store.upsert_candles(make_candles(START, 5))  # hours 0..4
+
+    run_tick(adapter, store, [("BTC/USDT", "1h")], make_config(clock))
+
+    assert hours_stored(store) == list(range(12))
+    assert store.find_gaps("BTC/USDT", "1h", t(0), t(12)) == []
+
+
+def test_a_restart_catches_up_from_the_latest_stored_candle() -> None:
+    clock = Clock(t(9) + 5_000)
+    store = make_store(clock)
+    store.upsert_candles(make_candles(START, 6))  # the previous process stored hours 0..5
+
+    restarted = FakeExchangeAdapter(make_candles(START, 30), clock=clock)
+    run_live(
+        restarted, store, ["BTC/USDT"], ["1h"],
+        config=make_config(clock), should_stop=stop_after(1),
+    )
+
+    assert restarted.calls[0][2] == t(6)  # asked only for what was missing
+    assert hours_stored(store) == list(range(9))
+
+
+def test_run_tick_reports_a_failed_series_and_still_updates_the_others() -> None:
+    clock = Clock(t(5) + 5_000)
+    adapter = FakeExchangeAdapter(
+        make_candles(START, 30, symbol="BTC/USDT") + make_candles(START, 30, symbol="ETH/USDT"),
+        clock=clock,
+    )
+    adapter.fail_next(AdapterError("bad symbol"))
+
+    result = run_tick(
+        adapter, make_store(clock), [("BTC/USDT", "1h"), ("ETH/USDT", "1h")], make_config(clock)
+    )
+
+    assert result.failures == [SeriesFailure("BTC/USDT", "1h", "bad symbol")]
+    assert result.behind == [("BTC/USDT", "1h")]
+
+
+def test_an_outage_longer_than_the_retry_budget_does_not_crash_the_loop() -> None:
+    clock = Clock(t(5) + 5_000)
+    adapter = FakeExchangeAdapter(make_candles(START, 30), clock=clock)
+    adapter.fail_next(NetworkError("exchange unreachable"), times=2)
+    store = make_store(clock)
+
+    run_live(
+        adapter, store, ["BTC/USDT"], ["1h"],
+        config=make_config(clock, max_retries=1), should_stop=stop_after(2),
+    )
+
+    # tick 1: one backoff (1s), retry fails, give up -> wait 30s, not a whole hour
+    assert clock.sleeps[:2] == [1.0, 30.0]
+    assert hours_stored(store) == [4]
+
+
+def test_unexpected_errors_still_propagate() -> None:
+    clock = Clock(t(5) + 5_000)
+    adapter = FakeExchangeAdapter(make_candles(START, 30), clock=clock)
+    adapter.fail_next(RuntimeError("a bug, not an outage"))
+
+    with pytest.raises(RuntimeError):
+        run_tick(adapter, make_store(clock), [("BTC/USDT", "1h")], make_config(clock))
