@@ -53,3 +53,9 @@ def test_timeframe_rejects_unknown_value() -> None:
 
 def test_timeframe_equals_its_plain_string() -> None:
     assert Timeframe.H1 == "1h"
+
+
+def test_candle_close_time_is_open_time_plus_one_timeframe() -> None:
+    candle = make_candle()
+
+    assert candle.close_time_ms == candle.open_time_ms + 3_600_000

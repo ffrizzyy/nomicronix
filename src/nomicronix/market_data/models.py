@@ -38,3 +38,8 @@ class Candle:
     low: Decimal
     close: Decimal
     volume: Decimal
+
+    @property
+    def close_time_ms(self) -> int:
+        """When this candle closes. Raises ValueError for an unsupported timeframe."""
+        return self.open_time_ms + Timeframe(self.timeframe).ms
