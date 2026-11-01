@@ -4,6 +4,7 @@ import ccxt
 import pytest
 
 from nomicronix.market_data.adapter import (
+    AdapterError,
     CcxtAdapter,
     ExchangeAdapter,
     NetworkError,
@@ -164,3 +165,13 @@ def test_ccxt_adapter_rejects_unknown_timeframe_without_calling_the_exchange() -
         adapter.fetch_candles("BTC/USDT", "2h", JAN_1_2025_MS, 10)
 
     assert client.calls == []
+
+
+def test_ccxt_adapter_maps_other_exchange_errors_to_a_non_retryable_adapter_error() -> None:
+    client = StubCcxtClient(error=ccxt.BaseError("binance does not have market symbol FOO/USDT"))
+    adapter = CcxtAdapter("binance", client=client)
+
+    with pytest.raises(AdapterError) as info:
+        adapter.fetch_candles("FOO/USDT", "1h", JAN_1_2025_MS, 10)
+
+    assert not isinstance(info.value, RateLimitError | NetworkError)

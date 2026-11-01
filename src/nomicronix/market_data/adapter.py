@@ -57,6 +57,8 @@ class CcxtAdapter:
             raise RateLimitError(str(exc)) from exc
         except ccxt.NetworkError as exc:
             raise NetworkError(str(exc)) from exc
+        except ccxt.BaseError as exc:  # e.g. unknown symbol: retrying will not help
+            raise AdapterError(str(exc)) from exc
         candles = [_row_to_candle(symbol, timeframe, row) for row in rows]
         return sorted(candles, key=lambda c: c.open_time_ms)
 

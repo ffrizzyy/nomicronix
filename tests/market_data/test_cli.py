@@ -2,6 +2,7 @@ from pathlib import Path
 
 import pytest
 
+from nomicronix.market_data.adapter import AdapterError
 from nomicronix.market_data.__main__ import main, parse_since
 from nomicronix.market_data.backfill import BackfillConfig
 from nomicronix.market_data.store import SqliteStore
@@ -48,3 +49,67 @@ def test_backfill_command_stores_candles_and_exits_zero(tmp_path: Path) -> None:
     assert code == 0
     stored = open_store(db).get_candles("BTC/USDT", "1h", 0, JAN_1_2025_MS + 1000 * HOUR_MS)
     assert len(stored) == 50
+
+
+def test_backfill_command_handles_several_symbols_and_timeframes(tmp_path: Path) -> None:
+    db = tmp_path / "market.sqlite"
+    adapter = FakeExchangeAdapter(
+        make_candles(JAN_1_2025_MS, 50, symbol="BTC/USDT", timeframe="1h")
+        + make_candles(JAN_1_2025_MS, 50, symbol="ETH/USDT", timeframe="1h")
+        + make_candles(JAN_1_2025_MS, 200, symbol="BTC/USDT", timeframe="15m")
+        + make_candles(JAN_1_2025_MS, 200, symbol="ETH/USDT", timeframe="15m")
+    )
+
+    code = main(
+        [
+            "backfill", "--exchange", "fake",
+            "--symbols", "BTC/USDT,ETH/USDT", "--timeframes", "1h,15m",
+            "--since", "2025-01-01", "--db", str(db),
+        ],
+        adapter=adapter,
+        config=make_config(),
+    )
+
+    store = open_store(db)
+    end = JAN_1_2025_MS + 1000 * HOUR_MS
+    assert code == 0
+    assert len(store.get_candles("ETH/USDT", "1h", 0, end)) == 50
+    assert len(store.get_candles("BTC/USDT", "15m", 0, end)) == 200
+
+
+def test_backfill_command_exits_non_zero_when_a_series_fails_but_keeps_the_rest(
+    tmp_path: Path,
+) -> None:
+    db = tmp_path / "market.sqlite"
+    adapter = FakeExchangeAdapter(
+        make_candles(JAN_1_2025_MS, 50, symbol="BTC/USDT")
+        + make_candles(JAN_1_2025_MS, 50, symbol="ETH/USDT")
+    )
+    adapter.fail_next(AdapterError("bad symbol"))
+
+    code = main(
+        [
+            "backfill", "--exchange", "fake",
+            "--symbols", "BTC/USDT,ETH/USDT", "--timeframes", "1h",
+            "--since", "2025-01-01", "--db", str(db),
+        ],
+        adapter=adapter,
+        config=make_config(),
+    )
+
+    store = open_store(db)
+    assert code == 1
+    assert store.latest_candle("BTC/USDT", "1h") is None
+    assert store.latest_candle("ETH/USDT", "1h") is not None
+
+
+def test_backfill_command_rejects_an_unsupported_timeframe(tmp_path: Path) -> None:
+    with pytest.raises(SystemExit):
+        main(
+            [
+                "backfill", "--exchange", "fake", "--symbols", "BTC/USDT",
+                "--timeframes", "2h", "--since", "2025-01-01", "--db", str(tmp_path / "m.sqlite"),
+            ],
+            adapter=FakeExchangeAdapter([]),
+            config=make_config(),
+        )

@@ -2,12 +2,12 @@
 
 import argparse
 import logging
+import sys
 from collections.abc import Sequence
 from datetime import UTC, datetime
-from itertools import product
 
 from nomicronix.market_data.adapter import CcxtAdapter, ExchangeAdapter
-from nomicronix.market_data.backfill import BackfillConfig, backfill_range
+from nomicronix.market_data.backfill import BackfillConfig, run_backfill
 from nomicronix.market_data.models import Timeframe
 from nomicronix.market_data.store import SqliteStore
 
@@ -51,14 +51,16 @@ def main(
     config = config or BackfillConfig()
     store = SqliteStore(args.db, adapter.name)
     try:
-        for symbol, timeframe in product(args.symbols, args.timeframes):
-            stored = backfill_range(
-                adapter, store, symbol, timeframe, args.since, config=config
-            )
-            print(f"{symbol} {timeframe}: {stored} candles written")
+        summary = run_backfill(
+            adapter, store, args.symbols, args.timeframes, args.since, config=config
+        )
     finally:
         store.close()
-    return 0
+    for (symbol, timeframe), count in summary.stored.items():
+        print(f"{symbol} {timeframe}: {count} candles written")
+    for failure in summary.failures:
+        print(f"{failure.symbol} {failure.timeframe}: FAILED: {failure.error}", file=sys.stderr)
+    return 1 if summary.failures else 0
 
 
 if __name__ == "__main__":

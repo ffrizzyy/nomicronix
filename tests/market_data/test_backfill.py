@@ -1,7 +1,14 @@
 import pytest
 
 from nomicronix.market_data.adapter import AdapterError, NetworkError, RateLimitError
-from nomicronix.market_data.backfill import BackfillConfig, backfill_range
+from nomicronix.market_data.backfill import (
+    BackfillConfig,
+    SeriesFailure,
+    backfill_range,
+    backfill_series,
+    run_backfill,
+)
+from nomicronix.market_data.models import Candle
 from nomicronix.market_data.store import SqliteStore
 from tests.market_data.fakes import JAN_1_2025_MS, FakeExchangeAdapter, make_candle, make_candles
 
@@ -196,3 +203,168 @@ def test_backfill_does_not_retry_errors_that_are_not_transient() -> None:
 
     assert sleeps == []
     assert len(adapter.calls) == 1
+
+
+# --- resume ---------------------------------------------------------------------------------
+
+
+class InterruptingAdapter:
+    """Delegates to an inner adapter, but call number `interrupt_on` raises KeyboardInterrupt."""
+
+    name = "fake"
+
+    def __init__(self, inner: FakeExchangeAdapter, interrupt_on: int) -> None:
+        self._inner = inner
+        self._interrupt_on = interrupt_on
+        self._calls = 0
+
+    def fetch_candles(
+        self, symbol: str, timeframe: str, since_ms: int, limit: int
+    ) -> list[Candle]:
+        self._calls += 1
+        if self._calls == self._interrupt_on:
+            raise KeyboardInterrupt
+        return self._inner.fetch_candles(symbol, timeframe, since_ms, limit)
+
+
+def test_an_interrupted_backfill_resumes_without_redownloading_stored_ranges() -> None:
+    data = make_candles(START, 250)
+    store = make_store()
+    interrupted = InterruptingAdapter(FakeExchangeAdapter(data), interrupt_on=3)
+
+    with pytest.raises(KeyboardInterrupt):
+        backfill_series(interrupted, store, "BTC/USDT", "1h", START, config=make_config())
+    assert stored_open_times(store) == [t(i) for i in range(200)]
+
+    resumed = FakeExchangeAdapter(data)
+    backfill_series(resumed, store, "BTC/USDT", "1h", START, config=make_config())
+
+    assert resumed.calls[0][2] == t(200)
+    assert stored_open_times(store) == [t(i) for i in range(250)]
+    assert store.find_gaps("BTC/USDT", "1h", t(0), t(250)) == []
+
+
+def test_a_second_run_downloads_only_the_new_candles() -> None:
+    store = make_store(now_ms=t(260))  # store clock never behind the backfill clock
+    backfill_series(
+        FakeExchangeAdapter(make_candles(START, 250)),
+        store, "BTC/USDT", "1h", START, config=make_config(),
+    )
+
+    later = FakeExchangeAdapter(make_candles(START, 260))
+    backfill_series(
+        later, store, "BTC/USDT", "1h", START, config=make_config(now_ms=t(260))
+    )
+
+    assert later.calls[0][2] == t(250)
+    assert stored_open_times(store) == [t(i) for i in range(260)]
+
+
+def test_a_rerun_with_nothing_new_makes_no_requests() -> None:
+    data = make_candles(START, 250)
+    store = make_store()
+    backfill_series(FakeExchangeAdapter(data), store, "BTC/USDT", "1h", START, config=make_config())
+
+    again = FakeExchangeAdapter(data)
+    backfill_series(again, store, "BTC/USDT", "1h", START, config=make_config())
+
+    assert again.calls == []
+
+
+def test_an_earlier_since_fills_in_the_missing_start() -> None:
+    data = make_candles(START, 250)
+    store = make_store()
+    first = FakeExchangeAdapter(data)
+    backfill_series(first, store, "BTC/USDT", "1h", t(100), config=make_config())
+
+    earlier = FakeExchangeAdapter(data)
+    backfill_series(earlier, store, "BTC/USDT", "1h", START, config=make_config())
+
+    assert [since for (_, _, since, _) in earlier.calls] == [t(0)]
+    assert stored_open_times(store) == [t(i) for i in range(250)]
+
+
+def test_a_later_since_does_not_download_anything_before_it() -> None:
+    data = make_candles(START, 250)
+    clock = [t(100)]  # mutable clock: first run happens at hour 100, second at hour 250
+    store = SqliteStore(":memory:", "fake", now_ms=lambda: clock[0])
+    config = BackfillConfig(limit=100, sleep=lambda _: None, now_ms=lambda: clock[0])
+    backfill_series(FakeExchangeAdapter(data), store, "BTC/USDT", "1h", START, config=config)
+    clock[0] = NOW_MS
+
+    later = FakeExchangeAdapter(data)
+    backfill_series(later, store, "BTC/USDT", "1h", t(200), config=config)
+
+    assert later.calls[0][2] == t(200)
+    assert stored_open_times(store) == [t(i) for i in range(100)] + [t(i) for i in range(200, 250)]
+
+
+def test_backfill_series_on_an_empty_store_downloads_from_since() -> None:
+    adapter = FakeExchangeAdapter(make_candles(START, 250))
+    store = make_store()
+
+    stored = backfill_series(adapter, store, "BTC/USDT", "1h", START, config=make_config())
+
+    assert stored == 250
+    assert adapter.calls[0][2] == t(0)
+
+
+# --- many series ----------------------------------------------------------------------------
+
+
+def test_run_backfill_handles_every_symbol_and_timeframe() -> None:
+    adapter = FakeExchangeAdapter(
+        make_candles(START, 10, symbol="BTC/USDT", timeframe="1h")
+        + make_candles(START, 10, symbol="ETH/USDT", timeframe="1h")
+        + make_candles(START, 40, symbol="BTC/USDT", timeframe="15m")
+        + make_candles(START, 40, symbol="ETH/USDT", timeframe="15m")
+    )
+    store = make_store()
+
+    summary = run_backfill(
+        adapter, store, ["BTC/USDT", "ETH/USDT"], ["1h", "15m"], START, config=make_config()
+    )
+
+    assert summary.failures == []
+    assert summary.stored == {
+        ("BTC/USDT", "1h"): 10,
+        ("BTC/USDT", "15m"): 40,
+        ("ETH/USDT", "1h"): 10,
+        ("ETH/USDT", "15m"): 40,
+    }
+
+
+def test_run_backfill_continues_after_one_series_fails() -> None:
+    adapter = FakeExchangeAdapter(
+        make_candles(START, 10, symbol="BTC/USDT") + make_candles(START, 10, symbol="ETH/USDT")
+    )
+    adapter.fail_next(AdapterError("bad symbol"))
+    store = make_store()
+
+    summary = run_backfill(
+        adapter, store, ["BTC/USDT", "ETH/USDT"], ["1h"], START, config=make_config()
+    )
+
+    assert summary.failures == [SeriesFailure("BTC/USDT", "1h", "bad symbol")]
+    assert summary.stored == {("ETH/USDT", "1h"): 10}
+    assert store.latest_candle("BTC/USDT", "1h") is None
+    assert store.latest_candle("ETH/USDT", "1h") is not None
+
+
+def test_run_backfill_reports_a_series_that_runs_out_of_retries() -> None:
+    adapter = FakeExchangeAdapter(
+        make_candles(START, 10, symbol="BTC/USDT") + make_candles(START, 10, symbol="ETH/USDT")
+    )
+    adapter.fail_next(RateLimitError("429"), times=2)  # first series: attempt + 1 retry, both fail
+
+    summary = run_backfill(
+        adapter,
+        make_store(),
+        ["BTC/USDT", "ETH/USDT"],
+        ["1h"],
+        START,
+        config=make_config(max_retries=1),
+    )
+
+    assert summary.failures == [SeriesFailure("BTC/USDT", "1h", "429")]
+    assert summary.stored == {("ETH/USDT", "1h"): 10}

@@ -2,10 +2,16 @@
 
 import logging
 import time
-from collections.abc import Callable
-from dataclasses import dataclass
+from collections.abc import Callable, Sequence
+from dataclasses import dataclass, field
+from itertools import product
 
-from nomicronix.market_data.adapter import ExchangeAdapter, NetworkError, RateLimitError
+from nomicronix.market_data.adapter import (
+    AdapterError,
+    ExchangeAdapter,
+    NetworkError,
+    RateLimitError,
+)
 from nomicronix.market_data.models import Candle, Timeframe
 from nomicronix.market_data.store import SqliteStore, utc_now_ms
 
@@ -63,6 +69,75 @@ def backfill_range(
             break
         cursor = next_cursor
     return stored
+
+
+def backfill_series(
+    adapter: ExchangeAdapter,
+    store: SqliteStore,
+    symbol: str,
+    timeframe: str,
+    since_ms: int,
+    *,
+    config: BackfillConfig = DEFAULT_CONFIG,
+) -> int:
+    """Like backfill_range up to the last closed candle, but resumes from what is stored.
+
+    Only the missing ends are downloaded: anything before the earliest stored candle
+    (if `since_ms` is earlier) and everything after the latest. A series is stored
+    contiguously from where it started, so the middle is never re-downloaded.
+    """
+    step_ms = Timeframe(timeframe).ms
+    since_ms = -(-since_ms // step_ms) * step_ms
+    earliest = store.earliest_candle(symbol, timeframe)
+    latest = store.latest_candle(symbol, timeframe)
+    if earliest is None or latest is None:
+        return backfill_range(adapter, store, symbol, timeframe, since_ms, config=config)
+
+    stored = 0
+    if since_ms < earliest.open_time_ms:
+        until_ms = earliest.open_time_ms
+        stored += backfill_range(
+            adapter, store, symbol, timeframe, since_ms, until_ms=until_ms, config=config
+        )
+    tail_start = max(since_ms, latest.open_time_ms + step_ms)
+    stored += backfill_range(adapter, store, symbol, timeframe, tail_start, config=config)
+    return stored
+
+
+@dataclass(frozen=True)
+class SeriesFailure:
+    symbol: str
+    timeframe: str
+    error: str
+
+
+@dataclass
+class BackfillSummary:
+    stored: dict[tuple[str, str], int] = field(default_factory=dict)
+    failures: list[SeriesFailure] = field(default_factory=list)
+
+
+def run_backfill(
+    adapter: ExchangeAdapter,
+    store: SqliteStore,
+    symbols: Sequence[str],
+    timeframes: Sequence[str],
+    since_ms: int,
+    *,
+    config: BackfillConfig = DEFAULT_CONFIG,
+) -> BackfillSummary:
+    """Backfill every symbol x timeframe. One failing series never stops the others."""
+    summary = BackfillSummary()
+    for symbol, timeframe in product(symbols, timeframes):
+        try:
+            count = backfill_series(adapter, store, symbol, timeframe, since_ms, config=config)
+        except AdapterError as exc:
+            logger.error("%s %s: backfill failed: %s", symbol, timeframe, exc)
+            summary.failures.append(SeriesFailure(symbol, timeframe, str(exc)))
+            continue
+        logger.info("%s %s: %d candles written", symbol, timeframe, count)
+        summary.stored[(symbol, timeframe)] = count
+    return summary
 
 
 def _fetch_with_retry(
