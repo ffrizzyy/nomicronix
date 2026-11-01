@@ -2,7 +2,7 @@
 
 Plan: `tasks/plan.md` · Spec: `SPEC-market-data.md`
 
-**Progress:** T1 to T7 implemented and committed. Backfill checkpoint is waiting on your review.
+**Progress:** T1 to T10 implemented and committed. Only T11 (docs and final sweep) remains.
 Items marked _not verified_ need `uv sync`, `ruff`, `mypy` or the real exchange, none of which
 were available in the build sandbox (no network). Please run them locally.
 
@@ -210,14 +210,14 @@ Test command used below (offline): `uv run pytest tests/market_data -m "not netw
 **Description:** Poll the exchange when each candle closes and append the new closed candle to the store.
 
 **Acceptance criteria:**
-- [ ] `live` command wakes shortly after each candle close and stores the new candle
-- [ ] Never stores the in-progress candle
-- [ ] Handles multiple symbols and timeframes in one process
+- [x] `live` command wakes shortly after each candle close and stores the new candle
+- [x] Never stores the in-progress candle
+- [x] Handles multiple symbols and timeframes in one process
 
 **Verification:**
-- [ ] Tests pass: `uv run pytest tests/market_data/test_live.py` (fake clock and fake adapter)
-- [ ] Manual check: run `live` for a few `15m` candles and confirm rows appear
-- [ ] Types and lint clean
+- [x] Tests pass: `uv run pytest tests/market_data/test_live.py` (fake clock and fake adapter)
+- [ ] Manual check: run `live` for a few `15m` candles and confirm rows appear _(not verified in sandbox: needs network or dev tools; run on your machine)_
+- [ ] Types and lint clean _(not verified in sandbox: needs network or dev tools; run on your machine)_
 
 **Dependencies:** Tasks 2, 3
 
@@ -235,14 +235,14 @@ Test command used below (offline): `uv run pytest tests/market_data -m "not netw
 **Description:** After a disconnect or process restart, detect missed candles and fill them before resuming.
 
 **Acceptance criteria:**
-- [ ] After a simulated outage, the updater fills every missed candle and `find_gaps` reports none
-- [ ] Network errors are retried with backoff and never crash the process
-- [ ] Restarting the process catches up from the latest stored candle
+- [x] After a simulated outage, the updater fills every missed candle and `find_gaps` reports none
+- [x] Network errors are retried with backoff and never crash the process
+- [x] Restarting the process catches up from the latest stored candle
 
 **Verification:**
-- [ ] Tests pass: `uv run pytest tests/market_data/test_live.py -k reconnect`
-- [ ] Manual check: disable the network for a few minutes during a live run, confirm no gaps after recovery
-- [ ] Types and lint clean
+- [x] Tests pass: `uv run pytest tests/market_data/test_live.py` (outage, restart and tick tests)
+- [ ] Manual check: disable the network for a few minutes during a live run, confirm no gaps after recovery _(not verified in sandbox: needs network or dev tools; run on your machine)_
+- [ ] Types and lint clean _(not verified in sandbox: needs network or dev tools; run on your machine)_
 
 **Dependencies:** Task 8
 
@@ -259,13 +259,13 @@ Test command used below (offline): `uv run pytest tests/market_data -m "not netw
 **Description:** Make stale data visible so downstream modules never trade on old prices.
 
 **Acceptance criteria:**
-- [ ] If no new candle arrives for more than 2x the timeframe, log `STALE_DATA` at error level with symbol and timeframe
-- [ ] A recovery log line is emitted when fresh data resumes
-- [ ] `latest_candle` age is enough for consumers to detect staleness themselves (documented)
+- [x] If no new candle arrives for more than 2x the timeframe, log `STALE_DATA` at error level with symbol and timeframe
+- [x] A recovery log line is emitted when fresh data resumes
+- [x] `latest_candle` age is enough for consumers to detect staleness themselves (documented)
 
 **Verification:**
-- [ ] Tests pass: `uv run pytest tests/market_data/test_live.py -k stale`
-- [ ] Types and lint clean
+- [x] Tests pass: `uv run pytest tests/market_data/test_live.py -k stale`
+- [ ] Types and lint clean _(not verified in sandbox: needs network or dev tools; run on your machine)_
 
 **Dependencies:** Task 8
 

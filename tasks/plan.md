@@ -88,9 +88,9 @@ Detailed acceptance criteria and verification steps are in `tasks/todo.md`.
 - [ ] Spec success criteria 1 to 4 met
 
 ### Phase 3: Live
-- [ ] T8: Live updater polling at candle close
-- [ ] T9: Reconnect and missed-candle catch-up
-- [ ] T10: Staleness detection
+- [x] T8: Live updater polling at candle close
+- [x] T9: Reconnect and missed-candle catch-up
+- [x] T10: Staleness detection
 
 ### Phase 4: Wrap-up
 - [ ] T11: Docs and final spec sweep

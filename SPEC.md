@@ -5,7 +5,7 @@ autonomous execution on a centralized exchange within strict risk limits.
 
 | Module id | Responsibility | Depends on | Spec | Status |
 |---|---|---|---|---|
-| market-data | Historical and live OHLCV, order book and funding data via a unified exchange adapter | none | SPEC-market-data.md | In progress (T1 to T7 done) |
+| market-data | Historical and live OHLCV, order book and funding data via a unified exchange adapter | none | SPEC-market-data.md | In progress (T1 to T10 done) |
 | backtesting | Strategy simulation with fees, slippage and walk-forward validation | market-data | SPEC-backtesting.md | Not started |
 | risk-engine | Position sizing, max drawdown and daily loss limits, kill switch. Deterministic code, no AI | none | SPEC-risk-engine.md | Not started |
 | strategy-engine | AI/ML signal generation: signal, confidence, rationale | market-data | SPEC-strategy-engine.md | Not started |
