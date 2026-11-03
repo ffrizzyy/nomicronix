@@ -1,0 +1,16 @@
+# Conservative defaults for the owner-operated Nomicronix paper account.
+# All percentages are decimal strings so Decimal math stays exact.
+# Instrument filters are passed by execution at check time, never cached here.
+
+[risk]
+risk_per_trade_pct = "0.005"
+max_daily_loss_pct = "0.03"
+max_drawdown_pct = "0.10"
+max_concurrent_positions = 2
+max_position_notional_pct = "0.25"
+max_total_exposure_pct = "0.50"
+max_open_risk_pct = "0.02"
+min_reward_risk = "2.0"
+min_notional_usdt = "10"
+max_signal_age_ms = 300000
+allowed_symbols = ["BTC/USDT", "ETH/USDT"]
