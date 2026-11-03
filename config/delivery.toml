@@ -1,0 +1,9 @@
+# Delivery defaults for the owner-operated Nomicronix paper account.
+# Credentials are environment-only and never appear in this file.
+
+[delivery]
+sinks = ["console"]
+jsonl_path = "data/deliveries.jsonl"
+quantity_step = "0.00001"
+min_quantity = "0.00001"
+min_notional = "10"
