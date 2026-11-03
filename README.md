@@ -172,4 +172,5 @@ typing and a coverage floor. No CI job needs exchange credentials.
 
 ## License
 
-No license has been declared yet. Treat the code as private until one is added.
+MIT. See [`LICENSE`](LICENSE). The software is provided "as is": no warranty,
+no promise of profit, and no liability for trading losses.

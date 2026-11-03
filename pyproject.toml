@@ -2,6 +2,9 @@
 name = "nomicronix"
 version = "0.1.0"
 description = "Nomicronix: personal AI crypto trading agent"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
 requires-python = ">=3.12"
 dependencies = [
     "ccxt>=4.0",
