@@ -11,6 +11,7 @@ from nomicronix.risk_engine.models import (
     Fill,
     FillAction,
     Instrument,
+    Position,
     RejectReason,
     RiskDecision,
     RiskLimits,
@@ -69,6 +70,19 @@ class RiskService:
             kill_switch=snapshot.kill_switch,
             last_mark_ms=state.last_mark_ms,
         )
+
+    def positions(self, now_ms: int | None = None) -> tuple[Position, ...]:
+        """Read-only view of the open positions, sorted by symbol.
+
+        Execution uses this to refuse a second order for a symbol it already
+        holds, and to reconcile the local book with the exchange. It never
+        mutates the risk state.
+        """
+        state = self._load(self._now(now_ms))
+        return tuple(state.positions[symbol] for symbol in sorted(state.positions))
+
+    def has_open_position(self, symbol: str, now_ms: int | None = None) -> bool:
+        return any(position.symbol == symbol for position in self.positions(now_ms))
 
     def mark(self, prices: Mapping[str, Decimal], now_ms: int | None = None) -> RiskStatus:
         now = self._now(now_ms)
