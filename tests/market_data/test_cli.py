@@ -2,8 +2,8 @@ from pathlib import Path
 
 import pytest
 
-from nomicronix.market_data.adapter import AdapterError
 from nomicronix.market_data.__main__ import main, parse_since
+from nomicronix.market_data.adapter import AdapterError
 from nomicronix.market_data.backfill import BackfillConfig
 from nomicronix.market_data.models import Candle
 from nomicronix.market_data.store import SqliteStore
