@@ -239,3 +239,29 @@ GitHub Actions workflow for Python 3.12/3.13.
 
 **Files:** `README.md`, `docs/risk-engine.md`, `docs/backtesting.md`,
 `examples/`, `.github/workflows/ci.yml`
+
+## Phase 6: risk-engine v1.1 partial fills
+
+## Task 14: partial fills per approval
+
+**Description:** Accept any positive piece of an approval, accumulate the pieces
+into one position, consume the approval only on the final piece, and allow a
+canceled remainder to be expired.
+
+**Acceptance criteria:**
+- [x] An OPEN fill may be any `0 < quantity <= approved - filled`
+- [x] Partial pieces accumulate at a quantity-weighted average entry price
+- [x] The approval is consumed only when the pieces reach the approved quantity
+- [x] Overfills are rejected without changing state
+- [x] `expire_approval` blocks every later fill on a canceled remainder
+- [x] A partial CLOSE reduces the position and realizes P&L proportionally
+- [x] Existing v1 databases gain `filled_quantity` without data loss
+- [x] 90% module coverage, ruff and mypy pass
+
+**Verification:** `uv run pytest tests/risk_engine -q
+--cov=nomicronix.risk_engine --cov-fail-under=90`
+
+**Dependencies:** risk-engine Tasks 1-7
+
+**Files:** `src/nomicronix/risk_engine/models.py`, `service.py`, `state.py`,
+`store.py`, `tests/risk_engine/test_partial_fills.py`

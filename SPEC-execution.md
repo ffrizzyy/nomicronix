@@ -143,20 +143,22 @@ These are the reason the module exists. Each is enforced, not documented away.
 
 ## Partial fills and the risk contract
 
-`risk-engine` v1 accepts exactly one full fill per approval. Spot market orders
-can fill in pieces or only partially before cancellation. This spec therefore
-requires a **risk-engine v1.1 change**, implemented with execution and reviewed
-separately:
+`risk-engine` v1.1 accepts any positive piece of an approval and consumes it only
+when the cumulative filled quantity reaches the approved quantity. Spot market
+orders can fill in pieces or only partially before cancellation, so execution
+aggregates the pieces and reports them once:
 
 - `record_fill` accepts a CLOSE or OPEN fill with
-  `0 < quantity <= approved_quantity`.
+  `0 < quantity <= approved_quantity - filled_quantity` (a CLOSE is bounded by
+  the open position).
 - The approval is consumed only when the filled quantity reaches the approved
   quantity; a partial fill leaves the remainder usable.
-- A canceled remainder expires the approval after the configured timeout.
+- A canceled remainder is expired with `RiskService.expire_approval`, after which
+  no later fill can use it.
 
-Until that change lands, execution must not be implemented, because reporting a
-partial fill as a full one would corrupt the risk books. This is a hard
-prerequisite, not a limitation.
+That change has landed in `risk-engine` v1.1 and is covered by
+`tests/risk_engine/test_partial_fills.py`. Execution must never report a partial
+fill as a full one.
 
 ## Exchange adapter
 
@@ -324,7 +326,8 @@ Execution writes risk state only through `RiskService`. It never writes
 
 - Binance only, spot only, long only, market orders only.
 - Stage 3 autonomy is out of scope; this spec stops at human-approved orders.
-- Partial fill support requires the risk-engine v1.1 change above.
+- Partial fills are supported by `risk-engine` v1.1; execution still has to
+  aggregate exchange pieces and report them exactly once.
 - No portfolio margin, OCO brackets or exchange-side stops; protective stops stay
   in `signal-delivery`/`risk-engine` until a later spec adds exchange stops.
 - No multi-account, sub-account or portfolio rebalancing support.

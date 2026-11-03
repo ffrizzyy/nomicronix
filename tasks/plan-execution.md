@@ -11,7 +11,7 @@ code is written. Nothing below authorizes a live order.
 
 - [ ] `uv run python -m nomicronix.signal_delivery readiness` exits `0`
 - [ ] The readiness JSON is archived with the owner's approval note
-- [ ] The risk-engine v1.1 partial-fill change is specified and approved
+- [x] The risk-engine v1.1 partial-fill change is specified and approved
 - [ ] A trade-only Binance key exists, withdrawals are disabled, IP is pinned
 - [ ] The owner approves stage 1 (shadow) and stage 2 (human-approved) only
 

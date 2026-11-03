@@ -14,7 +14,7 @@ v1.1 partial-fill change approved, and confirm the exchange key is trade-only.
 
 **Acceptance criteria:**
 - [ ] `readiness` exits `0` and its JSON is archived
-- [ ] The risk-engine v1.1 partial-fill contract is approved
+- [x] The risk-engine v1.1 partial-fill contract is approved and implemented
 - [ ] Withdrawals are disabled and the key is IP-restricted
 - [ ] The owner approves stages 1 and 2, not stage 3
 

@@ -34,8 +34,9 @@ leverage, futures and short selling. This module never sees or needs API keys.
 
 - Spot long-only trades. `Side.BUY` is the only supported side until a later
   spec adds shorts.
-- Full fills only in v1. Partial fills and multiple fills per approval are
-  explicitly deferred (see Open Questions).
+- Partial fills per approval are supported since v1.1. An OPEN fill may cover any
+  positive part of the approved quantity, and the approval is consumed only when
+  the cumulative filled quantity reaches it. A CLOSE fill may also be partial.
 - The owner runs one process that mutates risk state at a time. The module is
   not a distributed lock.
 - Prices are supplied by `market-data` consumers as `Decimal` values. This
@@ -168,14 +169,20 @@ class RiskService:
         now_ms: int,
     ) -> RiskDecision: ...
     def record_fill(self, signal_id: str, fill: Fill, now_ms: int) -> PortfolioState: ...
+    def expire_approval(self, signal_id: str, now_ms: int) -> None: ...
     def engage_kill_switch(self, reason: str, now_ms: int) -> None: ...
     def resume(self, confirmation: str, now_ms: int) -> None: ...
 ```
 
 `check` evaluates and persists the decision atomically before returning. A
 caller cannot receive an approval that is absent from the journal.
-`record_fill` consumes the approval: an unknown, duplicate or already-consumed
-`signal_id` is rejected, so state cannot drift from the audit trail.
+`record_fill` records one piece of an approval: an unknown or already-consumed
+`signal_id` is rejected, and an OPEN fill may be any quantity in
+`0 < quantity <= approved_quantity - filled_quantity`. The approval is consumed
+only when the pieces add up to the approved quantity; partial pieces accumulate
+into one position at a weighted average entry price. An overfill is rejected
+without changing state. `expire_approval` voids the unfilled remainder after a
+cancel so no later fill can use it.
 
 `resume` requires the exact confirmation phrase `RESUME TRADING`. No other value
 clears the kill switch.
@@ -246,7 +253,7 @@ size is 1 unit (100 USDT notional), which is inside the 250 USDT position cap.
     day, realized P&L today, kill switch, last mark time.
   - `positions`: open positions keyed by symbol.
   - `approvals`: every approved `signal_id`, approved quantity/notional,
-    timestamp and consumption timestamp.
+    cumulative filled quantity, timestamp and consumption timestamp.
   - `decisions`: append-only journal of every check, including rejected ones.
 - A UTC day rollover resets `day_start_equity` and `realized_pnl_today`. The
   kill switch does **not** reset on a day boundary.
@@ -358,7 +365,8 @@ def position_size(
 - Adding short selling, leverage, futures or margin.
 - Changing the SQLite schema, `TradeProposal`, `RiskDecision` or `RiskService`
   contract.
-- Adding partial fills or multiple fills per approval.
+- Changing the v1.1 fill contract: overfills, multiple approvals per signal, or
+  a second concurrent writer.
 - Adding a runtime dependency.
 - Adding an automatic kill-switch reset.
 - Letting `confidence` change position size.
@@ -394,7 +402,12 @@ def position_size(
    but never persisted cannot be returned.
 9. Every decision, approved or rejected, is queryable from the journal after a
    restart, with its proposal and reasons intact.
-10. `uv run pytest ... --cov-fail-under=90`, `ruff check` and `mypy` all pass.
+10. A partial OPEN fill keeps the approval open, accumulates one position at a
+    weighted average entry and consumes the approval exactly when the pieces
+    reach the approved quantity. An overfill is rejected without changing state,
+    and a canceled remainder can be expired so no later fill uses it. A partial
+    CLOSE reduces the position and realizes P&L proportionally.
+11. `uv run pytest ... --cov-fail-under=90`, `ruff check` and `mypy` all pass.
 
 ## Open Questions
 
@@ -406,8 +419,9 @@ def position_size(
    timeframe (for example, 2x the timeframe) instead of a flat 5 minutes?
 4. **Aggregate open risk:** is a 2% cap across all open positions right, or
    should it also be 3% to match the daily loss limit?
-5. **Partial fills:** v1 consumes an approval with one full fill. Do you need
-   partial fills before `execution`, or can that wait?
+5. **Partial fills (resolved in v1.1):** approved before `execution`.
+   `record_fill` accepts any positive part of an approval and consumes it only on
+   the final piece; `expire_approval` voids a canceled remainder.
 6. **Resume safety:** is typing `RESUME TRADING` enough, or do you want a second
    confirmation or a cooldown after a drawdown stop?
 7. **Instrument filters:** confirm that `execution` should pass live exchange

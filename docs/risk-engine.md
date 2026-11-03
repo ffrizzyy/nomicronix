@@ -98,7 +98,7 @@ instrument = Instrument(
 )
 decision = service.check(proposal, instrument, now_ms=1_735_689_600_000)
 if decision.approved:
-    # execution places the order, then reports the full fill
+    # execution places the order, then reports each fill piece here
     service.record_fill(
         "sig-001",
         Fill(
@@ -116,9 +116,28 @@ store.close()
 `check` evaluates and persists the decision atomically before returning. A caller
 cannot receive an approval that is missing from the journal.
 
-`record_fill` consumes the approval. An unknown, duplicate or already-consumed
-`signal_id` raises `ApprovalError`; an open fill must match the approved symbol and
-quantity. v1 requires one full fill per approval.
+`record_fill` records a piece of an approval. An unknown or already-consumed
+`signal_id` raises `ApprovalError`. An OPEN fill must match the approved symbol
+and satisfy `0 < quantity <= approved_quantity - filled_quantity`.
+
+## Partial fills
+
+A spot market order can fill in pieces. v1.1 accepts that without corrupting the
+books:
+
+- Each OPEN piece accumulates into the same position. Quantity adds up, the entry
+  price becomes the quantity-weighted average and fees add up.
+- The approval is consumed only when the cumulative filled quantity equals the
+  approved quantity. A partial piece leaves the remainder usable.
+- An overfill is rejected before any state changes.
+- `expire_approval(signal_id)` voids a canceled remainder. The approval keeps its
+  `filled_quantity` for audit and refuses every later fill.
+- A partial CLOSE reduces the position, allocates the entry fee proportionally
+  and realizes the matching share of P&L. A close larger than the position is
+  rejected.
+
+The `approvals` table gained `filled_quantity` in v1.1. Opening an existing v1
+database adds the column with a default of `0`; no data is rewritten.
 
 ## Rule order
 
@@ -209,7 +228,7 @@ an empty allowlist and malformed TOML.
     realized P&L today, kill switch, last mark time.
   - `positions`: open positions keyed by symbol.
   - `approvals`: every approved signal id, quantity/notional, stop/target,
-    creation time and consumption time.
+    cumulative filled quantity, creation time and consumption time.
   - `decisions`: append-only journal of every check, approved or rejected.
 - A UTC day rollover resets `day_start_equity` and `realized_pnl_today`. It does not
   reset the kill switch.
@@ -225,7 +244,10 @@ an empty allowlist and malformed TOML.
   not silently approve.
 - Rejected check: journaled, but no approval row is created.
 - Duplicate fill or unknown approval: `ApprovalError`.
-- Close fill quantity not equal to the open position: rejected.
+- Overfill or a fill for the wrong symbol: `ApprovalError`, no state change.
+- Expiring an unknown or already-consumed approval: `ApprovalError`.
+- Close fill larger than the open position: rejected; a smaller close reduces the
+  position and realizes P&L proportionally.
 - `resume` with any phrase other than `RESUME TRADING`: `ValueError`; the kill
   switch stays engaged.
 
@@ -237,7 +259,7 @@ an empty allowlist and malformed TOML.
 | Drawdown basis | Intraday marked-to-market equity against the all-time peak |
 | Signal age | Flat 5 minutes, configurable; stale signals fail closed |
 | Aggregate open risk | 2% of equity, tighter than the daily limit |
-| Partial fills | Deferred to `execution`; v1 consumes one full fill |
+| Partial fills | v1.1: any positive piece of an approval; consumed only on the final piece |
 | Resume safety | Exact phrase `RESUME TRADING`; no auto-reset or cooldown |
 | Instrument filters | Passed by `execution` at check time, never cached |
 | Kill-switch alerts | Journal plus CLI for now; `signal-delivery` will consume it later |
