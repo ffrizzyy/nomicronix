@@ -8,7 +8,7 @@ never bypasses its risk layer.
 future order must pass through a deterministic risk check. There is no
 "confidence high enough to skip the limits" path.
 
-This repository currently contains the four foundation modules:
+This repository currently contains the five foundation modules:
 
 | Module | Status | What it does |
 |---|---|---|
@@ -16,7 +16,7 @@ This repository currently contains the four foundation modules:
 | `risk-engine` | Built | Sizes positions, enforces daily/drawdown/exposure limits, owns the kill switch |
 | `backtesting` | Built | Replays candles through a strategy with fees, slippage and walk-forward validation |
 | `strategy-engine` | Built | Turns stored candles into causal, validated signal candidates |
-| `signal-delivery` | Not started | Telegram/log delivery and paper-trade tracking |
+| `signal-delivery` | Built | Risk-gated alerts plus an honest paper-trade ledger |
 | `execution` | Not started | Paper, human-approved, then autonomous order placement |
 
 The full capability map lives in [`SPEC.md`](SPEC.md).
@@ -34,8 +34,10 @@ The full capability map lives in [`SPEC.md`](SPEC.md).
 - **Append-only audit.** Every risk decision, approved or rejected, is journaled
   before it is returned.
 - **No secrets in git.** Exchange API keys are read from environment variables by
-  the modules that eventually need them. The four built modules need no keys:
-  market-data uses public endpoints, and risk/backtesting/strategy are offline.
+  the modules that eventually need them. The five built modules need no trading
+  keys: market-data uses public endpoints, risk/backtesting/strategy are offline,
+  and signal-delivery only reads optional Telegram credentials from the
+  environment.
 - **Backtests are research.** A backtest result is never a live trading signal.
   Out-of-sample walk-forward metrics are the headline, not the best in-sample
   number.
@@ -61,12 +63,20 @@ uv run python -m nomicronix.strategy_engine scan \
     --since 2025-01-01 --until 2025-02-01 \
     --out results/btc-signals.json
 
-# 4. Generate a fresh proposal and evaluate it against the risk limits
+# 4. Deliver the approved signals and open paper trades
+uv run python -m nomicronix.signal_delivery deliver \
+    --signals results/btc-signals.json \
+    --sink console --sink jsonl
+
+# 5. Mark open paper trades at a fresh price
+uv run python -m nomicronix.signal_delivery tick --price BTC/USDT=94.50
+
+# 6. Generate a fresh proposal and evaluate it against the risk limits
 uv run python examples/make_proposal.py
 uv run python -m nomicronix.risk_engine check \
     --proposal data/proposal.json --price BTC/USDT=100
 
-# 5. Backtest a strategy over the stored candles
+# 7. Backtest a strategy over the stored candles
 uv run python -m nomicronix.backtesting run \
     --strategy examples.strategies:SmaCross \
     --symbol BTC/USDT --timeframe 1h \
@@ -81,11 +91,14 @@ uv run python -m nomicronix.backtesting run \
 ```
 config/risk.toml              committed conservative risk limits
 config/strategy.toml          committed scan defaults (confidence, TTL, history)
+config/delivery.toml          committed delivery defaults (sinks, filters)
 data/                         local SQLite databases (gitignored)
 docs/market-data.md           market-data guide
 docs/risk-engine.md           risk-engine guide
 docs/backtesting.md           backtesting guide
 docs/strategy-engine.md       strategy-engine guide
+docs/signal-delivery.md       signal-delivery guide
+examples/deliver_signals.py   delivers a candidate on paper and prints the report
 examples/make_proposal.py     writes a fresh, valid proposal for a manual check
 examples/proposal.json        static proposal schema sample (timestamp is stale)
 examples/strategies.py        SmaCross, BuyAndHold and AlwaysFlat examples
@@ -95,11 +108,13 @@ src/nomicronix/
   risk_engine/                pure rules, sizing, state, SQLite journal, CLI
   backtesting/                broker, engine, metrics, walk-forward, CLI
   strategy_engine/            causal proposers, scan loop, results, CLI
+  signal_delivery/            risk-gated outbox, sinks, paper ledger, CLI
 tests/
   market_data/                offline fakes plus an opt-in network contract test
   risk_engine/
   backtesting/
   strategy_engine/
+  signal_delivery/
 tasks/                        implementation plan and task checklist
 SPEC*.md                      approved module specs and capability map
 ```
@@ -179,6 +194,31 @@ Signals are proposals, not orders. Every candidate must still pass
 `risk-engine`. See [`docs/strategy-engine.md`](docs/strategy-engine.md) for the
 proposer contract, causality rules and output schema.
 
+### signal-delivery
+
+```bash
+# Risk-check every signal at its candle close, then alert and paper-fill
+uv run python -m nomicronix.signal_delivery deliver \
+    --signals results/btc-signals.json \
+    --sink console --sink jsonl --jsonl data/deliveries.jsonl
+
+# Optional Telegram sink; credentials are environment-only
+export NOMICRONIX_TELEGRAM_BOT_TOKEN=...
+export NOMICRONIX_TELEGRAM_CHAT_ID=...
+uv run python -m nomicronix.signal_delivery deliver \
+    --signals results/btc-signals.json --sink telegram
+
+# Mark open paper trades at a price, then report delivery and P&L
+uv run python -m nomicronix.signal_delivery tick --price BTC/USDT=94.50
+uv run python -m nomicronix.signal_delivery report
+```
+
+Rejected signals are recorded in the outbox but never sent as trade alerts, and
+re-running the same file never duplicates a delivery or a position. Paper fills
+are full and fee-free. See
+[`docs/signal-delivery.md`](docs/signal-delivery.md) for the outbox, replay and
+paper-trade rules.
+
 ## Development
 
 ```bash
@@ -187,6 +227,7 @@ uv run pytest -m "not network"                    # full offline suite
 uv run pytest tests/risk_engine --cov=nomicronix.risk_engine --cov-fail-under=90
 uv run pytest tests/backtesting --cov=nomicronix.backtesting --cov-fail-under=90
 uv run pytest tests/strategy_engine --cov=nomicronix.strategy_engine --cov-fail-under=90
+uv run pytest tests/signal_delivery --cov=nomicronix.signal_delivery --cov-fail-under=90
 uv run ruff format --check src tests examples
 uv run ruff check src tests examples
 uv run mypy src/nomicronix
@@ -209,6 +250,9 @@ typing and a coverage floor. No CI job needs exchange credentials.
   already open, and duplicate/exposure rules decide downstream. Its confidences
   are fixed rule scores, not calibrated probabilities, and no AI provider is
   wired yet.
+- `signal-delivery` paper fills are full and fee-free at the planned price, with
+  stops checked before targets. It has no scheduler or retry daemon, and Telegram
+  is its only remote sink.
 - `execution` does not exist yet. Nothing in this repository can place an order.
 
 ## License

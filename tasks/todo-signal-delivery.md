@@ -10,10 +10,10 @@ Plan: `tasks/plan-signal-delivery.md` · Spec: `SPEC-signal-delivery.md`
 `DeliveryStatus`, errors, and deterministic text/JSON rendering.
 
 **Acceptance criteria:**
-- [ ] Notification fields match the spec, with `Decimal` prices
-- [ ] Rendered text includes signal id, levels, size, reasons and strategy
-- [ ] JSON is sorted-key and byte-stable
-- [ ] No wall clock or absolute path appears in a notification
+- [x] Notification fields match the spec, with `Decimal` prices
+- [x] Rendered text includes signal id, levels, size, reasons and strategy
+- [x] JSON is sorted-key and byte-stable
+- [x] No wall clock or absolute path appears in a notification
 
 **Verification:** `uv run pytest tests/signal_delivery/test_render.py`
 
@@ -29,10 +29,10 @@ Plan: `tasks/plan-signal-delivery.md` · Spec: `SPEC-signal-delivery.md`
 signal ids and status transitions.
 
 **Acceptance criteria:**
-- [ ] `deliveries` and `paper_trades` survive reopen
-- [ ] A duplicate signal id updates its row, never duplicates it
-- [ ] Open, close and query helpers round-trip `Decimal` exactly
-- [ ] Corrupt rows surface as `StoreError`
+- [x] `deliveries` and `paper_trades` survive reopen
+- [x] A duplicate signal id updates its row, never duplicates it
+- [x] Open, close and query helpers round-trip `Decimal` exactly
+- [x] Corrupt rows surface as `StoreError`
 
 **Verification:** `uv run pytest tests/signal_delivery/test_store.py`
 
@@ -49,10 +49,10 @@ signal ids and status transitions.
 injected transport and environment credentials.
 
 **Acceptance criteria:**
-- [ ] Console output is deterministic
-- [ ] JSONL appends one sorted JSON line per notification
-- [ ] Telegram without credentials fails before sending
-- [ ] A fake transport captures exactly the rendered text
+- [x] Console output is deterministic
+- [x] JSONL appends one sorted JSON line per notification
+- [x] Telegram without credentials fails before sending
+- [x] A fake transport captures exactly the rendered text
 
 **Verification:** `uv run pytest tests/signal_delivery/test_sinks.py`
 
@@ -69,10 +69,10 @@ injected transport and environment credentials.
 open a paper trade on approval and persist the outbox.
 
 **Acceptance criteria:**
-- [ ] Rejected signals get an outbox row but no trade
-- [ ] Approved signals open exactly one full paper position
-- [ ] Re-running the same file does not duplicate delivery or trades
-- [ ] A pending/failed row resends without re-checking risk
+- [x] Rejected signals get an outbox row but no trade
+- [x] Approved signals open exactly one full paper position
+- [x] Re-running the same file does not duplicate delivery or trades
+- [x] A pending/failed row resends without re-checking risk
 
 **Verification:** `uv run pytest tests/signal_delivery/test_service.py`
 
@@ -88,10 +88,10 @@ open a paper trade on approval and persist the outbox.
 report delivery/paper totals.
 
 **Acceptance criteria:**
-- [ ] Stops are checked before targets
-- [ ] A gap below the stop closes at the worse price
-- [ ] Closes call `RiskService.record_fill` with the full quantity
-- [ ] The report totals match the ledger
+- [x] Stops are checked before targets
+- [x] A gap below the stop closes at the worse price
+- [x] Closes call `RiskService.record_fill` with the full quantity
+- [x] The report totals match the ledger
 
 **Verification:** `uv run pytest tests/signal_delivery/test_service.py tests/signal_delivery/test_report.py`
 
@@ -109,10 +109,10 @@ report delivery/paper totals.
 codes.
 
 **Acceptance criteria:**
-- [ ] `deliver` exits `0` for an all-rejected file
-- [ ] A sink failure exits `2` and leaves the row retryable
-- [ ] `tick` accepts a file or repeated `--price`
-- [ ] Flags override `config/delivery.toml`
+- [x] `deliver` exits `0` for an all-rejected file
+- [x] A sink failure exits `2` and leaves the row retryable
+- [x] `tick` accepts a file or repeated `--price`
+- [x] Flags override `config/delivery.toml`
 
 **Verification:** `uv run pytest tests/signal_delivery/test_cli.py`
 
@@ -128,10 +128,10 @@ codes.
 and run the full quality sweep.
 
 **Acceptance criteria:**
-- [ ] `docs/signal-delivery.md` documents the outbox, replay and paper rules
-- [ ] `examples/deliver_signals.py` shows the library path
-- [ ] README lists the module as built
-- [ ] Full suite, ruff, mypy and 90% module coverage pass
+- [x] `docs/signal-delivery.md` documents the outbox, replay and paper rules
+- [x] `examples/deliver_signals.py` shows the library path
+- [x] README lists the module as built
+- [x] Full suite, ruff, mypy and 90% module coverage pass
 
 **Verification:** `uv run pytest -m "not network"`, `uv run ruff check src tests
 examples`, `uv run mypy src/nomicronix`
