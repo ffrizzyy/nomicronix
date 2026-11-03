@@ -75,9 +75,7 @@ class FakeExchangeAdapter:
         """The next `times` calls raise `error` before any later call succeeds."""
         self._failures.extend([error] * times)
 
-    def fetch_candles(
-        self, symbol: str, timeframe: str, since_ms: int, limit: int
-    ) -> list[Candle]:
+    def fetch_candles(self, symbol: str, timeframe: str, since_ms: int, limit: int) -> list[Candle]:
         self.calls.append((symbol, timeframe, since_ms, limit))
         if self._failures:
             raise self._failures.pop(0)

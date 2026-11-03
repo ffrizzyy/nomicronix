@@ -176,8 +176,26 @@ def test_partial_window_is_opt_in() -> None:
     )
 
     assert len(complete.windows) == 2
+    assert complete.warnings == (f"PARTIAL_WINDOW_DROPPED at {JAN_1_2025_MS + 20 * HOUR_MS}",)
     assert len(partial.windows) == 3
+    assert partial.warnings == ()
     assert partial.windows[-1].test_end_ms == config(22).end_ms
+
+
+def test_partial_window_too_short_is_reported() -> None:
+    result = run_walk_forward_on_candles(
+        make_candles(21),
+        factory,
+        {"bias": (1,)},
+        make_config(
+            start_ms=JAN_1_2025_MS,
+            end_ms=JAN_1_2025_MS + 20 * HOUR_MS + 30 * 60_000,
+        ),
+        wf(allow_partial=True),
+    )
+
+    assert len(result.windows) == 2
+    assert result.warnings == (f"PARTIAL_WINDOW_TOO_SHORT at {JAN_1_2025_MS + 20 * HOUR_MS}",)
 
 
 def test_run_walk_forward_loads_from_the_store() -> None:

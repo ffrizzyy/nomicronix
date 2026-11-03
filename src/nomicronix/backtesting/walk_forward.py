@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping, Sequence
 from dataclasses import replace
 from itertools import product
 
@@ -31,7 +32,7 @@ class WalkForwardError(ValueError):
 def run_walk_forward(
     store: MarketDataStore,
     factory: StrategyFactory,
-    param_grid: dict[str, tuple[object, ...]],
+    param_grid: Mapping[str, Sequence[object]],
     config: BacktestConfig,
     wf: WalkForwardConfig,
 ) -> WalkForwardResult:
@@ -48,14 +49,16 @@ def run_walk_forward(
 def run_walk_forward_on_candles(
     candles: list[Candle],
     factory: StrategyFactory,
-    param_grid: dict[str, tuple[object, ...]],
+    param_grid: Mapping[str, Sequence[object]],
     config: BacktestConfig,
     wf: WalkForwardConfig,
 ) -> WalkForwardResult:
     if not candles:
         raise WalkForwardError("no candles supplied")
     step_ms = Timeframe(config.timeframe).ms
-    windows = _window_bounds(config.start_ms, config.end_ms, wf, step_ms, config.min_candles)
+    windows, bounds_warnings = _window_bounds(
+        config.start_ms, config.end_ms, wf, step_ms, config.min_candles
+    )
     if not windows:
         raise WalkForwardError("not enough candles for one train/test window")
 
@@ -63,7 +66,7 @@ def run_walk_forward_on_candles(
     oos_curve: list[EquityPoint] = []
     oos_trades: list[Trade] = []
     window_results: list[WindowResult] = []
-    warnings: list[str] = []
+    warnings: list[str] = list(bounds_warnings)
     oos_equity = config.initial_cash
 
     for train_start, train_end, test_start, test_end in windows:
@@ -163,24 +166,28 @@ def _window_bounds(
     wf: WalkForwardConfig,
     step_ms: int,
     min_candles: int,
-) -> list[tuple[int, int, int, int]]:
+) -> tuple[list[tuple[int, int, int, int]], list[str]]:
     if wf.step_ms < wf.test_ms:
         raise WalkForwardError("step must be at least the test window to avoid overlap")
     windows: list[tuple[int, int, int, int]] = []
+    warnings: list[str] = []
     t = start_ms
     while t + wf.train_ms + wf.test_ms <= end_ms:
         windows.append((t, t + wf.train_ms, t + wf.train_ms, t + wf.train_ms + wf.test_ms))
         t += wf.step_ms
-    if wf.allow_partial and t + wf.train_ms < end_ms:
+    if t + wf.train_ms < end_ms:
         test_start = t + wf.train_ms
         remaining_ms = end_ms - test_start
-        if remaining_ms >= min_candles * step_ms:
+        if wf.allow_partial and remaining_ms >= min_candles * step_ms:
             windows.append((t, test_start, test_start, end_ms))
-    return windows
+        else:
+            reason = "PARTIAL_WINDOW_TOO_SHORT" if wf.allow_partial else "PARTIAL_WINDOW_DROPPED"
+            warnings.append(f"{reason} at {test_start}")
+    return windows, warnings
 
 
 def _parameter_combinations(
-    param_grid: dict[str, tuple[object, ...]],
+    param_grid: Mapping[str, Sequence[object]],
 ) -> list[dict[str, object]]:
     keys = sorted(param_grid)
     if not keys:

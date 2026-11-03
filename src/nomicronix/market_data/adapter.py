@@ -24,9 +24,7 @@ class NetworkError(AdapterError):
 class ExchangeAdapter(Protocol):
     name: str
 
-    def fetch_candles(
-        self, symbol: str, timeframe: str, since_ms: int, limit: int
-    ) -> list[Candle]:
+    def fetch_candles(self, symbol: str, timeframe: str, since_ms: int, limit: int) -> list[Candle]:
         """Candles with open_time_ms >= since_ms, ascending, at most `limit`.
 
         The last candle may still be in progress: callers must drop it before storing.
@@ -45,9 +43,7 @@ class CcxtAdapter:
             client = getattr(ccxt, exchange_id)({"enableRateLimit": True})
         self._client = client
 
-    def fetch_candles(
-        self, symbol: str, timeframe: str, since_ms: int, limit: int
-    ) -> list[Candle]:
+    def fetch_candles(self, symbol: str, timeframe: str, since_ms: int, limit: int) -> list[Candle]:
         import ccxt
 
         Timeframe(timeframe)  # raises ValueError for unsupported timeframes

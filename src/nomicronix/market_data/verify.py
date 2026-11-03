@@ -54,15 +54,26 @@ def verify_series(
     if adapter is not None and gaps:
         for gap_start, gap_end in gaps:
             refilled += backfill_range(
-                adapter, store, symbol, timeframe, gap_start,
-                until_ms=gap_end + step_ms, config=config,
+                adapter,
+                store,
+                symbol,
+                timeframe,
+                gap_start,
+                until_ms=gap_end + step_ms,
+                config=config,
             )
         gaps = store.find_gaps(symbol, timeframe, start_ms, end_ms)
 
     count = len(store.get_candles(symbol, timeframe, start_ms, end_ms))
     return VerifyReport(
-        symbol, timeframe, count, earliest.open_time_ms, latest.open_time_ms,
-        gaps, refill_attempted, refilled,
+        symbol,
+        timeframe,
+        count,
+        earliest.open_time_ms,
+        latest.open_time_ms,
+        gaps,
+        refill_attempted,
+        refilled,
     )
 
 

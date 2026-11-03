@@ -147,9 +147,7 @@ def test_backfill_retries_rate_limits_with_exponential_backoff() -> None:
     sleeps: list[float] = []
     store = make_store()
 
-    stored = backfill_range(
-        adapter, store, "BTC/USDT", "1h", START, config=make_config(sleeps)
-    )
+    stored = backfill_range(adapter, store, "BTC/USDT", "1h", START, config=make_config(sleeps))
 
     assert sleeps == [1.0, 2.0, 4.0]
     assert stored == 10
@@ -218,9 +216,7 @@ class InterruptingAdapter:
         self._interrupt_on = interrupt_on
         self._calls = 0
 
-    def fetch_candles(
-        self, symbol: str, timeframe: str, since_ms: int, limit: int
-    ) -> list[Candle]:
+    def fetch_candles(self, symbol: str, timeframe: str, since_ms: int, limit: int) -> list[Candle]:
         self._calls += 1
         if self._calls == self._interrupt_on:
             raise KeyboardInterrupt
@@ -248,13 +244,15 @@ def test_a_second_run_downloads_only_the_new_candles() -> None:
     store = make_store(now_ms=t(260))  # store clock never behind the backfill clock
     backfill_series(
         FakeExchangeAdapter(make_candles(START, 250)),
-        store, "BTC/USDT", "1h", START, config=make_config(),
+        store,
+        "BTC/USDT",
+        "1h",
+        START,
+        config=make_config(),
     )
 
     later = FakeExchangeAdapter(make_candles(START, 260))
-    backfill_series(
-        later, store, "BTC/USDT", "1h", START, config=make_config(now_ms=t(260))
-    )
+    backfill_series(later, store, "BTC/USDT", "1h", START, config=make_config(now_ms=t(260)))
 
     assert later.calls[0][2] == t(250)
     assert stored_open_times(store) == [t(i) for i in range(260)]
@@ -399,9 +397,7 @@ class StuckAdapter:
     def __init__(self) -> None:
         self.calls = 0
 
-    def fetch_candles(
-        self, symbol: str, timeframe: str, since_ms: int, limit: int
-    ) -> list[Candle]:
+    def fetch_candles(self, symbol: str, timeframe: str, since_ms: int, limit: int) -> list[Candle]:
         self.calls += 1
         if self.calls > 3:
             raise AssertionError("backfill kept asking: no progress guard")

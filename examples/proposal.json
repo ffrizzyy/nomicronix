@@ -1,0 +1,17 @@
+{
+  "signal_id": "sig-2026-01-01-btc-001",
+  "strategy_id": "sma-cross",
+  "symbol": "BTC/USDT",
+  "side": "buy",
+  "entry_price": "100",
+  "stop_price": "95",
+  "target_price": "115",
+  "confidence": 0.8,
+  "created_at_ms": 1735689600000,
+  "instrument": {
+    "symbol": "BTC/USDT",
+    "quantity_step": "0.00001",
+    "min_quantity": "0.00001",
+    "min_notional": "10"
+  }
+}

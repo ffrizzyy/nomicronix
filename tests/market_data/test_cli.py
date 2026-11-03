@@ -43,11 +43,16 @@ def test_backfill_command_stores_candles_and_exits_zero(tmp_path: Path) -> None:
     code = main(
         [
             "backfill",
-            "--exchange", "fake",
-            "--symbols", "BTC/USDT",
-            "--timeframes", "1h",
-            "--since", "2025-01-01",
-            "--db", str(db),
+            "--exchange",
+            "fake",
+            "--symbols",
+            "BTC/USDT",
+            "--timeframes",
+            "1h",
+            "--since",
+            "2025-01-01",
+            "--db",
+            str(db),
         ],
         adapter=adapter,
         config=make_config(),
@@ -69,9 +74,17 @@ def test_backfill_command_handles_several_symbols_and_timeframes(tmp_path: Path)
 
     code = main(
         [
-            "backfill", "--exchange", "fake",
-            "--symbols", "BTC/USDT,ETH/USDT", "--timeframes", "1h,15m",
-            "--since", "2025-01-01", "--db", str(db),
+            "backfill",
+            "--exchange",
+            "fake",
+            "--symbols",
+            "BTC/USDT,ETH/USDT",
+            "--timeframes",
+            "1h,15m",
+            "--since",
+            "2025-01-01",
+            "--db",
+            str(db),
         ],
         adapter=adapter,
         config=make_config(),
@@ -96,9 +109,17 @@ def test_backfill_command_exits_non_zero_when_a_series_fails_but_keeps_the_rest(
 
     code = main(
         [
-            "backfill", "--exchange", "fake",
-            "--symbols", "BTC/USDT,ETH/USDT", "--timeframes", "1h",
-            "--since", "2025-01-01", "--db", str(db),
+            "backfill",
+            "--exchange",
+            "fake",
+            "--symbols",
+            "BTC/USDT,ETH/USDT",
+            "--timeframes",
+            "1h",
+            "--since",
+            "2025-01-01",
+            "--db",
+            str(db),
         ],
         adapter=adapter,
         config=make_config(),
@@ -114,8 +135,17 @@ def test_backfill_command_rejects_an_unsupported_timeframe(tmp_path: Path) -> No
     with pytest.raises(SystemExit):
         main(
             [
-                "backfill", "--exchange", "fake", "--symbols", "BTC/USDT",
-                "--timeframes", "2h", "--since", "2025-01-01", "--db", str(tmp_path / "m.sqlite"),
+                "backfill",
+                "--exchange",
+                "fake",
+                "--symbols",
+                "BTC/USDT",
+                "--timeframes",
+                "2h",
+                "--since",
+                "2025-01-01",
+                "--db",
+                str(tmp_path / "m.sqlite"),
             ],
             adapter=FakeExchangeAdapter([]),
             config=make_config(),
@@ -133,8 +163,16 @@ def seed(db: Path, candles: list[Candle]) -> None:
 
 def verify_args(db: Path, *extra: str) -> list[str]:
     return [
-        "verify", "--exchange", "fake", "--symbols", "BTC/USDT", "--timeframes", "1h",
-        "--db", str(db), *extra,
+        "verify",
+        "--exchange",
+        "fake",
+        "--symbols",
+        "BTC/USDT",
+        "--timeframes",
+        "1h",
+        "--db",
+        str(db),
+        *extra,
     ]
 
 
@@ -193,8 +231,15 @@ def test_live_command_stores_new_candles_and_exits_zero_when_stopped(tmp_path: P
 
     code = main(
         [
-            "live", "--exchange", "fake", "--symbols", "BTC/USDT", "--timeframes", "1h",
-            "--db", str(db),
+            "live",
+            "--exchange",
+            "fake",
+            "--symbols",
+            "BTC/USDT",
+            "--timeframes",
+            "1h",
+            "--db",
+            str(db),
         ],
         adapter=adapter,
         config=BackfillConfig(sleep=clock.sleep, now_ms=clock),
@@ -214,8 +259,15 @@ def test_live_command_exits_cleanly_on_ctrl_c(tmp_path: Path) -> None:
 
     code = main(
         [
-            "live", "--exchange", "fake", "--symbols", "BTC/USDT", "--timeframes", "1h",
-            "--db", str(tmp_path / "market.sqlite"),
+            "live",
+            "--exchange",
+            "fake",
+            "--symbols",
+            "BTC/USDT",
+            "--timeframes",
+            "1h",
+            "--db",
+            str(tmp_path / "market.sqlite"),
         ],
         adapter=FakeExchangeAdapter([], clock=clock),
         config=BackfillConfig(sleep=clock.sleep, now_ms=clock),

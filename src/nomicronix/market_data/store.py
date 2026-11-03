@@ -120,9 +120,7 @@ class SqliteStore:
         with self._conn:
             self._conn.executemany(_UPSERT, rows)
 
-    def get_candles(
-        self, symbol: str, timeframe: str, start_ms: int, end_ms: int
-    ) -> list[Candle]:
+    def get_candles(self, symbol: str, timeframe: str, start_ms: int, end_ms: int) -> list[Candle]:
         """Candles with start_ms <= open_time_ms < end_ms, ascending."""
         cursor = self._conn.execute(
             f"SELECT {_SELECT_COLUMNS} FROM candles"

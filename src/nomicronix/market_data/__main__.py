@@ -50,9 +50,7 @@ def _build_parser() -> argparse.ArgumentParser:
     verify = commands.add_parser("verify", help="report gaps in stored candles")
     _add_series_args(verify)
     verify.add_argument("--since", type=parse_since, help="also check from this UTC date")
-    verify.add_argument(
-        "--refill", action="store_true", help="try to fill gaps from the exchange"
-    )
+    verify.add_argument("--refill", action="store_true", help="try to fill gaps from the exchange")
     return parser
 
 
@@ -100,7 +98,10 @@ def _live(
     store = SqliteStore(args.db, adapter.name)
     try:
         run_live(
-            adapter, store, args.symbols, args.timeframes,
+            adapter,
+            store,
+            args.symbols,
+            args.timeframes,
             config=LiveConfig(backfill=config),
             should_stop=should_stop or (lambda: False),
         )
@@ -120,8 +121,12 @@ def _verify(
     try:
         for symbol, timeframe in product(args.symbols, args.timeframes):
             report = verify_series(
-                store, symbol, timeframe,
-                since_ms=args.since, adapter=refill_adapter, config=config,
+                store,
+                symbol,
+                timeframe,
+                since_ms=args.since,
+                adapter=refill_adapter,
+                config=config,
             )
             print(format_report(report))
             all_ok = all_ok and report.ok

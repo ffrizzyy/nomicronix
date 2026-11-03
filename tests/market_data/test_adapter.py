@@ -43,9 +43,7 @@ def test_fake_returns_candles_from_since_in_ascending_order() -> None:
 
     result = adapter.fetch_candles("BTC/USDT", "1h", JAN_1_2025_MS + 3 * HOUR_MS, 100)
 
-    assert [c.open_time_ms for c in result] == [
-        JAN_1_2025_MS + i * HOUR_MS for i in range(3, 10)
-    ]
+    assert [c.open_time_ms for c in result] == [JAN_1_2025_MS + i * HOUR_MS for i in range(3, 10)]
 
 
 def test_fake_honours_limit() -> None:

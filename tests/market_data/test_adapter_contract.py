@@ -21,10 +21,7 @@ def test_binance_returns_well_formed_hourly_candles() -> None:
 
     assert len(candles) == 24
     assert candles[0].open_time_ms == JAN_1_2025_MS
-    deltas = [
-        b.open_time_ms - a.open_time_ms
-        for a, b in zip(candles, candles[1:], strict=False)
-    ]
+    deltas = [b.open_time_ms - a.open_time_ms for a, b in zip(candles, candles[1:], strict=False)]
     assert deltas == [HOUR_MS] * 23
     for c in candles:
         assert (c.symbol, c.timeframe) == ("BTC/USDT", "1h")

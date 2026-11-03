@@ -106,8 +106,12 @@ def test_the_loop_stores_each_new_candle_shortly_after_it_closes() -> None:
     store = make_store(clock)
 
     run_live(
-        adapter, store, ["BTC/USDT"], ["1h"],
-        config=make_config(clock), should_stop=stop_after(4),
+        adapter,
+        store,
+        ["BTC/USDT"],
+        ["1h"],
+        config=make_config(clock),
+        should_stop=stop_after(4),
     )
 
     assert hours_stored(store) == [4, 5, 6, 7]
@@ -124,8 +128,12 @@ def test_the_loop_handles_several_symbols_in_one_process() -> None:
     store = make_store(clock)
 
     run_live(
-        adapter, store, ["BTC/USDT", "ETH/USDT"], ["1h"],
-        config=make_config(clock), should_stop=stop_after(2),
+        adapter,
+        store,
+        ["BTC/USDT", "ETH/USDT"],
+        ["1h"],
+        config=make_config(clock),
+        should_stop=stop_after(2),
     )
 
     assert hours_stored(store, "BTC/USDT") == [4, 5]
@@ -141,8 +149,12 @@ def test_the_loop_wakes_at_the_soonest_candle_close_across_timeframes() -> None:
     store = make_store(clock)
 
     run_live(
-        adapter, store, ["BTC/USDT"], ["1h", "15m"],
-        config=make_config(clock), should_stop=stop_after(1),
+        adapter,
+        store,
+        ["BTC/USDT"],
+        ["1h", "15m"],
+        config=make_config(clock),
+        should_stop=stop_after(1),
     )
 
     # next 15m close is 800s away, plus the 5s poll delay
@@ -209,8 +221,12 @@ def test_a_restart_catches_up_from_the_latest_stored_candle() -> None:
 
     restarted = FakeExchangeAdapter(make_candles(START, 30), clock=clock)
     run_live(
-        restarted, store, ["BTC/USDT"], ["1h"],
-        config=make_config(clock), should_stop=stop_after(1),
+        restarted,
+        store,
+        ["BTC/USDT"],
+        ["1h"],
+        config=make_config(clock),
+        should_stop=stop_after(1),
     )
 
     assert restarted.calls[0][2] == t(6)  # asked only for what was missing
@@ -240,8 +256,12 @@ def test_an_outage_longer_than_the_retry_budget_does_not_crash_the_loop() -> Non
     store = make_store(clock)
 
     run_live(
-        adapter, store, ["BTC/USDT"], ["1h"],
-        config=make_config(clock, max_retries=1), should_stop=stop_after(2),
+        adapter,
+        store,
+        ["BTC/USDT"],
+        ["1h"],
+        config=make_config(clock, max_retries=1),
+        should_stop=stop_after(2),
     )
 
     # tick 1: one backoff (1s), retry fails, give up -> wait 30s, not a whole hour
@@ -344,8 +364,12 @@ def test_the_live_loop_logs_stale_data_during_an_outage_and_recovery_after_it(
 
     with caplog.at_level(logging.INFO):
         run_live(
-            adapter, store, ["BTC/USDT"], ["1h"],
-            config=make_config(clock, max_retries=0), should_stop=stop_after(2),
+            adapter,
+            store,
+            ["BTC/USDT"],
+            ["1h"],
+            config=make_config(clock, max_retries=0),
+            should_stop=stop_after(2),
         )
 
     events = [
@@ -369,9 +393,7 @@ class OutageAdapter(FakeExchangeAdapter):
         self._time = clock
         self._outage = (outage_from_ms, outage_to_ms)
 
-    def fetch_candles(
-        self, symbol: str, timeframe: str, since_ms: int, limit: int
-    ) -> list[Candle]:
+    def fetch_candles(self, symbol: str, timeframe: str, since_ms: int, limit: int) -> list[Candle]:
         if self._outage[0] <= self._time() < self._outage[1]:
             raise NetworkError("exchange unreachable")
         return super().fetch_candles(symbol, timeframe, since_ms, limit)
@@ -393,8 +415,12 @@ def test_a_three_hour_outage_in_a_simulated_day_leaves_no_gaps_and_is_reported(
 
     with caplog.at_level(logging.INFO):
         run_live(
-            adapter, store, symbols, timeframes,
-            config=make_config(clock), should_stop=lambda: clock() >= t(24),
+            adapter,
+            store,
+            symbols,
+            timeframes,
+            config=make_config(clock),
+            should_stop=lambda: clock() >= t(24),
         )
 
     for symbol in symbols:
