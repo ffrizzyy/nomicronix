@@ -453,3 +453,43 @@ def test_bad_inline_price_value_returns_one(
 ) -> None:
     assert main(["tick", "--price", "BTC/USDT=abc", "--at", "1", *storage(tmp_path)]) == 1
     assert "not a decimal number" in capsys.readouterr().err
+
+
+def seed_ready_ledger(tmp_path: Path) -> None:
+    from nomicronix.signal_delivery.store import DeliveryStore
+    from tests.signal_delivery.test_readiness import seed, winning_trades
+
+    store = DeliveryStore(tmp_path / "delivery.sqlite")
+    try:
+        seed(store, winning_trades())
+    finally:
+        store.close()
+
+
+def test_readiness_ready_exits_zero_and_emits_json(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    seed_ready_ledger(tmp_path)
+
+    assert main(["readiness", *storage(tmp_path), "--json"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ready"] is True
+    assert payload["closed_trades"] == 30
+    assert all(item["passed"] for item in payload["criteria"])
+
+
+def test_readiness_not_ready_exits_two(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    assert main(["readiness", *storage(tmp_path)]) == 2
+    out = capsys.readouterr().out
+    assert "execution readiness: NOT READY" in out
+    assert "[FAIL] closed paper trades: 0 (need >= 30)" in out
+
+
+def test_readiness_with_a_bad_promotion_config_returns_one(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    config = tmp_path / "bad.toml"
+    config.write_text("[promotion]\nmin_closed_trades = 0\n", encoding="utf-8")
+
+    assert main(["readiness", *storage(tmp_path), "--config", str(config)]) == 1
+    assert "error:" in capsys.readouterr().err

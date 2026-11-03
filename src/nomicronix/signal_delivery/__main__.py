@@ -15,7 +15,11 @@ from nomicronix.risk_engine.config import load_limits
 from nomicronix.risk_engine.models import utc_now_ms
 from nomicronix.risk_engine.service import RiskService
 from nomicronix.risk_engine.store import RiskStateStore
-from nomicronix.signal_delivery.config import DeliveryDefaults, load_delivery_defaults
+from nomicronix.signal_delivery.config import (
+    DeliveryDefaults,
+    load_delivery_defaults,
+    load_promotion_criteria,
+)
 from nomicronix.signal_delivery.models import (
     ConfigError,
     DeliveryAction,
@@ -25,6 +29,7 @@ from nomicronix.signal_delivery.models import (
     SignalFileError,
     StoreError,
 )
+from nomicronix.signal_delivery.readiness import evaluate_readiness, render_readiness
 from nomicronix.signal_delivery.render import notification_from_payload
 from nomicronix.signal_delivery.report import build_report, render_report
 from nomicronix.signal_delivery.service import DeliveryService
@@ -78,6 +83,10 @@ def _build_parser() -> argparse.ArgumentParser:
 
     report = commands.add_parser("report", help="delivery and paper P&L report")
     _add_storage(report)
+
+    readiness = commands.add_parser("readiness", help="check the execution promotion gate")
+    _add_storage(readiness)
+    readiness.add_argument("--json", action="store_true", help="emit a machine-readable report")
     return parser
 
 
@@ -236,6 +245,24 @@ def _run_report(args: argparse.Namespace) -> int:
         risk_store.close()
 
 
+def _run_readiness(args: argparse.Namespace) -> int:
+    criteria = load_promotion_criteria(args.config)
+    delivery_store = DeliveryStore(args.delivery_db)
+    try:
+        report = evaluate_readiness(
+            delivery_store,
+            criteria,
+            initial_cash=Decimal(args.cash),
+        )
+        if args.json:
+            print(json.dumps(report.payload(), sort_keys=True, indent=2))
+        else:
+            print(render_readiness(report))
+        return 0 if report.ready else 2
+    finally:
+        delivery_store.close()
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
     try:
@@ -243,6 +270,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             return _run_deliver(args)
         if args.command == "tick":
             return _run_tick(args)
+        if args.command == "readiness":
+            return _run_readiness(args)
         return _run_report(args)
     except DeliveryError as exc:
         print(f"delivery error: {exc}", file=sys.stderr)

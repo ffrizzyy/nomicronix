@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from nomicronix.signal_delivery.models import ConfigError, InstrumentRules
+from nomicronix.signal_delivery.readiness import PromotionCriteria
 
 DEFAULT_CONFIG_PATH = Path("config/delivery.toml")
 KNOWN_SINKS = frozenset({"console", "jsonl", "telegram"})
@@ -84,3 +85,47 @@ def load_delivery_defaults(path: str | Path | None = None) -> DeliveryDefaults:
         )
     except (ConfigError, TypeError, ValueError, ArithmeticError) as exc:
         raise ConfigError(f"invalid delivery config in {config_path}: {exc}") from exc
+
+
+def _int(section: dict[str, Any], key: str, default: int) -> int:
+    raw = section.get(key, default)
+    if isinstance(raw, bool) or not isinstance(raw, int):
+        raise ConfigError(f"{key} must be an integer")
+    return raw
+
+
+def load_promotion_criteria(path: str | Path | None = None) -> PromotionCriteria:
+    """Load the `[promotion]` table, falling back to the spec thresholds."""
+    config_path = DEFAULT_CONFIG_PATH if path is None else Path(path)
+    if not config_path.exists():
+        if path is None:
+            return PromotionCriteria()
+        raise ConfigError(f"delivery config not found: {config_path}")
+
+    try:
+        data = tomllib.loads(config_path.read_text(encoding="utf-8"))
+    except tomllib.TOMLDecodeError as exc:
+        raise ConfigError(f"invalid TOML in {config_path}: {exc}") from exc
+
+    section = data.get("promotion")
+    if section is None:
+        return PromotionCriteria()
+    if not isinstance(section, dict):
+        raise ConfigError("[promotion] must be a table")
+
+    default = PromotionCriteria()
+    try:
+        return PromotionCriteria(
+            min_closed_trades=_int(section, "min_closed_trades", default.min_closed_trades),
+            min_days=_int(section, "min_days", default.min_days),
+            assumed_round_trip_cost_pct=_decimal(
+                section,
+                "assumed_round_trip_cost_pct",
+                default.assumed_round_trip_cost_pct,
+            ),
+            max_paper_drawdown_pct=_decimal(
+                section, "max_paper_drawdown_pct", default.max_paper_drawdown_pct
+            ),
+        )
+    except (ConfigError, TypeError, ValueError, ArithmeticError) as exc:
+        raise ConfigError(f"invalid promotion config in {config_path}: {exc}") from exc

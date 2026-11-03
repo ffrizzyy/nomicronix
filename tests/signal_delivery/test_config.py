@@ -6,8 +6,10 @@ import pytest
 from nomicronix.signal_delivery.config import (
     DeliveryDefaults,
     load_delivery_defaults,
+    load_promotion_criteria,
 )
 from nomicronix.signal_delivery.models import ConfigError
+from nomicronix.signal_delivery.readiness import PromotionCriteria
 
 
 def write_config(path: Path, text: str) -> Path:
@@ -87,3 +89,61 @@ def test_instrument_rules_mirror_the_defaults() -> None:
     assert rules.quantity_step == Decimal("0.00001")
     assert rules.min_quantity == Decimal("0.00001")
     assert rules.min_notional == Decimal("10")
+
+
+def test_repository_promotion_defaults_load() -> None:
+    assert load_promotion_criteria(Path("config/delivery.toml")) == PromotionCriteria()
+
+
+def test_missing_default_config_uses_promotion_defaults(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    assert load_promotion_criteria() == PromotionCriteria()
+
+
+def test_missing_explicit_config_for_promotion_is_an_error(tmp_path: Path) -> None:
+    with pytest.raises(ConfigError, match="not found"):
+        load_promotion_criteria(tmp_path / "missing.toml")
+
+
+def test_promotion_overrides_load(tmp_path: Path) -> None:
+    path = write_config(
+        tmp_path / "delivery.toml",
+        "[promotion]\n"
+        "min_closed_trades = 10\n"
+        "min_days = 7\n"
+        'assumed_round_trip_cost_pct = "0.001"\n'
+        'max_paper_drawdown_pct = "0.02"\n',
+    )
+    assert load_promotion_criteria(path) == PromotionCriteria(
+        min_closed_trades=10,
+        min_days=7,
+        assumed_round_trip_cost_pct=Decimal("0.001"),
+        max_paper_drawdown_pct=Decimal("0.02"),
+    )
+
+
+def test_absent_promotion_table_uses_defaults(tmp_path: Path) -> None:
+    path = write_config(tmp_path / "delivery.toml", '[delivery]\nsinks = ["console"]\n')
+    assert load_promotion_criteria(path) == PromotionCriteria()
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "[promotion]\nmin_closed_trades = 2.5\n",
+        "[promotion]\nmin_closed_trades = true\n",
+        '[promotion]\nmin_days = "30"\n',
+        '[promotion]\nassumed_round_trip_cost_pct = "nope"\n',
+        '[promotion]\nmax_paper_drawdown_pct = "1.5"\n',
+        '[promotion]\nmax_paper_drawdown_pct = "0"\n',
+        "[promotion]\nmin_closed_trades = 0\n",
+        'promotion = "nope"\n',
+        "[promotion\n",
+    ],
+)
+def test_invalid_promotion_config_is_rejected(tmp_path: Path, body: str) -> None:
+    path = write_config(tmp_path / "delivery.toml", body)
+    with pytest.raises(ConfigError):
+        load_promotion_criteria(path)

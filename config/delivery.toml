@@ -7,3 +7,12 @@ jsonl_path = "data/deliveries.jsonl"
 quantity_step = "0.00001"
 min_quantity = "0.00001"
 min_notional = "10"
+
+# Promotion gate: `execution` is not built until the paper record passes this.
+# Costs are charged per round trip on entry notional, so fee-free paper fills
+# are judged as if they had paid 10 bps per side.
+[promotion]
+min_closed_trades = 30
+min_days = 28
+assumed_round_trip_cost_pct = "0.002"
+max_paper_drawdown_pct = "0.05"
