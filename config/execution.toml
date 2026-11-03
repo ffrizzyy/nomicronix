@@ -1,0 +1,20 @@
+# Execution defaults. Safe by construction: nothing here can place an order.
+# Credentials are environment-only and never appear in this file.
+
+[execution]
+exchange = "binance"
+market_type = "spot"
+dry_run = true
+allow_live = false
+stage = "shadow"
+max_slippage_bps = 50
+max_intent_age_ms = 300000
+order_timeout_ms = 60000
+poll_interval_ms = 1000
+max_clock_skew_ms = 2000
+quantity_step = "0.00001"
+min_quantity = "0.00001"
+min_notional = "10"
+
+[risk]
+require_kill_switch_clear = true
