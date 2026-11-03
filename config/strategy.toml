@@ -1,0 +1,5 @@
+[scan]
+min_confidence = "0.5"
+ttl_ms = 300000
+min_history = 50
+max_signals = 100
