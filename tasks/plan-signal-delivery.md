@@ -69,6 +69,13 @@ Arrow direction is the build order. Tests mirror it.
   status, full quality sweep.
 - Checkpoint: CLI exit codes, byte-stable JSONL, 90% module coverage.
 
+### Phase 5: execution promotion gate
+- Readiness criteria, ledger scoring, `readiness` command and `[promotion]`
+  defaults, so the project-wide "no execution without a paper record" rule is
+  executable rather than aspirational.
+- Checkpoint: every criterion has a positive and negative test; the command
+  exits `0` only when the record is ready.
+
 ## Risks and Mitigations
 
 | Risk | Impact | Mitigation |

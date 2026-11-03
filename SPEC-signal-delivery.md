@@ -155,6 +155,9 @@ uv run python -m nomicronix.signal_delivery tick \
 
 # Delivery and paper P&L report
 uv run python -m nomicronix.signal_delivery report
+
+# Execution promotion gate (0 ready, 2 not ready)
+uv run python -m nomicronix.signal_delivery readiness
 ```
 
 - `--delivery-db` defaults to `data/delivery.sqlite`; `--risk-db` to
@@ -175,7 +178,7 @@ Exit codes:
 |---|---|
 | `0` | Command completed, including zero delivered or zero closed trades |
 | `1` | Invalid input, config, signal file, store or price map |
-| `2` | A configured sink failed to send |
+| `2` | A configured sink failed to send, or `readiness` criteria are not met |
 
 Rejected signals do not make `deliver` exit nonzero; risk did its job.
 
@@ -195,6 +198,25 @@ min_notional = "10"
 Unknown sink names, non-positive instrument values and malformed TOML are
 rejected. CLI flags override file values. Selecting `telegram` without both
 environment variables fails before any delivery.
+
+## Execution promotion gate
+
+`execution` may not be built until the paper record is credible. `readiness`
+scores the ledger against the `[promotion]` table and exits `0` only when all
+criteria pass, `2` when the record is not ready and `1` on bad input.
+
+| Criterion | Default | Meaning |
+|---|---|---|
+| Closed paper trades | `>= 30` | Enough samples to look at |
+| Track-record days | `>= 28` | Spans more than one market mood |
+| Expectancy after costs | `> 0` USDT/trade | Charges an assumed 20 bps round trip on fee-free paper fills |
+| Paper max drawdown | `<= 5%` | Half the live kill-switch limit |
+| Delivery health | 0 failed, 0 pending | A broken alert channel invalidates the record |
+| Ledger integrity | delivered == trades | Every approved alert has a paper trade |
+
+`--json` emits the same report with `kind = "execution-readiness"`, Decimal
+values as strings and one entry per criterion. The gate is a minimum bar, not
+proof of edge; passing it authorizes building `execution`, not trading.
 
 ## Persistence
 
@@ -231,6 +253,7 @@ and the decision journal. Delivery never writes those tables directly; it calls
 - One position per symbol, inherited from `risk-engine`; no pyramiding.
 - No scheduler, retry daemon or rate-limit handling. `tick` is owner-invoked.
 - Telegram is the only remote sink. Email and webhooks are future work.
+- The promotion gate is a minimum bar, not proof of edge.
 - Signals are research inputs and paper trades are not evidence of future
   profit.
 
@@ -248,3 +271,4 @@ and the decision journal. Delivery never writes those tables directly; it calls
 | Credentials | Environment variables only, never persisted or printed |
 | Remote sink | Telegram Bot API; console and JSONL work offline |
 | Scheduling | Owner-invoked CLI; no daemon in v1 |
+| Execution gate | Measurable readiness criteria in `[promotion]`; `readiness` exits 2 until met |

@@ -47,6 +47,9 @@ uv run python -m nomicronix.signal_delivery tick \
 
 # Delivery and paper P&L report
 uv run python -m nomicronix.signal_delivery report
+
+# Check whether the paper record can promote execution (0 ready, 2 not ready)
+uv run python -m nomicronix.signal_delivery readiness
 ```
 
 | Option | Meaning |
@@ -63,6 +66,7 @@ uv run python -m nomicronix.signal_delivery report
 | `--prices` | JSON object of symbol to price for `tick` |
 | `--price SYMBOL=PRICE` | Repeatable tick mark |
 | `--at` | UTC epoch milliseconds for `tick`; default now |
+| `--json` | Machine-readable output for `readiness` |
 
 Exit codes:
 
@@ -70,7 +74,7 @@ Exit codes:
 |---|---|
 | `0` | Command completed, including zero delivered or zero closed trades |
 | `1` | Invalid input, config, signal file, store or price map |
-| `2` | A configured sink failed to send |
+| `2` | A configured sink failed, or `readiness` criteria are not met |
 
 A rejected signal does not make `deliver` exit nonzero. Risk did its job, and
 the rejection is recorded in the outbox.
@@ -110,6 +114,47 @@ Stops are checked before targets, so a candle that crosses both is treated
 conservatively. A gap below the stop fills at the worse price. Closing a trade
 is a full `RiskService.record_fill` CLOSE with zero fee. v1 ignores partial
 fills and slippage; those belong to `execution`.
+
+## Execution promotion gate
+
+The repository rule is that `execution` is not built until the paper record is
+credible. `readiness` makes that rule executable: it scores the ledger against
+the `[promotion]` table and exits `0` only when every criterion passes, `2` when
+the record is not ready, and `1` on bad input.
+
+| Criterion | Default | Why it exists |
+|---|---|---|
+| Closed paper trades | `>= 30` | A handful of trades is luck, not evidence |
+| Track-record days | `>= 28` | Must span more than one market mood |
+| Expectancy after costs | `> 0` USDT/trade | Fee-free paper fills are charged an assumed 20 bps round trip |
+| Paper max drawdown | `<= 5%` | Half the live kill-switch limit |
+| Delivery health | 0 failed, 0 pending | An unreachable alert channel invalidates the record |
+| Ledger integrity | delivered == trades | Every approved alert must have a paper trade |
+
+`--json` emits the same report machine-readably:
+
+```json
+{
+  "schema_version": 1,
+  "kind": "execution-readiness",
+  "ready": false,
+  "closed_trades": 12,
+  "track_record_days": "9.5",
+  "gross_pnl": "40",
+  "net_pnl": "35.6",
+  "expectancy": "2.966666666666666666666666667",
+  "max_drawdown_pct": "0.012",
+  "criteria": [
+    {"key": "closed-trades", "label": "closed paper trades",
+     "passed": false, "actual": "12", "required": ">= 30"}
+  ]
+}
+```
+
+The gate is a minimum bar, not a profit promise. Passing it means the process
+has been exercised and did not lose money after conservative costs; it does not
+mean live trading will work. Raising a threshold is always allowed; lowering one
+is a deliberate owner decision that should be written down.
 
 ## Sinks
 
@@ -198,11 +243,18 @@ jsonl_path = "data/deliveries.jsonl"
 quantity_step = "0.00001"
 min_quantity = "0.00001"
 min_notional = "10"
+
+[promotion]
+min_closed_trades = 30
+min_days = 28
+assumed_round_trip_cost_pct = "0.002"
+max_paper_drawdown_pct = "0.05"
 ```
 
 CLI flags override file values. Unknown sinks, repeated sinks, non-positive
 instrument values and malformed TOML are rejected. A missing default file falls
-back to these defaults; a missing explicit `--config` file is an error.
+back to these defaults; a missing explicit `--config` file is an error. A file
+without a `[promotion]` table uses the readiness defaults above.
 
 ## Guarantees
 
@@ -223,6 +275,8 @@ back to these defaults; a missing explicit `--config` file is an error.
 - One position per symbol, inherited from `risk-engine`; no pyramiding.
 - No scheduler, retry daemon or rate-limit handling. `tick` is owner-invoked.
 - Telegram is the only remote sink. Email and webhooks are future work.
+- The promotion gate is a minimum bar, not proof of edge. Passing it only means
+  the paper process was exercised without losing money after assumed costs.
 - Signals are research inputs; paper P&L is not evidence of future profit.
 
 ## Development
@@ -252,3 +306,4 @@ The module has no network tests and must never contact an exchange.
 | Credentials | Environment variables only, never persisted or printed |
 | Remote sink | Telegram Bot API; console and JSONL work offline |
 | Scheduling | Owner-invoked CLI; no daemon in v1 |
+| Execution gate | Measurable readiness criteria in `[promotion]`; `readiness` exits 2 until met |

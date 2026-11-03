@@ -139,3 +139,26 @@ examples`, `uv run mypy src/nomicronix`
 **Dependencies:** Tasks 1-6
 
 **Files:** `README.md`, `docs/signal-delivery.md`, `examples/`, `config/`
+
+## Task 8: execution promotion gate
+
+**Description:** Make the project-wide rule that `execution` waits for a credible
+paper record measurable: add readiness criteria, a scorer, a `readiness` command
+and TOML defaults.
+
+**Acceptance criteria:**
+- [x] Six criteria: closed trades, track-record days, expectancy after costs,
+      paper drawdown, delivery health and ledger integrity
+- [x] `readiness` exits `0` only when every criterion passes and `2` otherwise
+- [x] `--json` emits a stable machine-readable report
+- [x] Thresholds live in `[promotion]` and are validated
+- [x] Docs and specs state that the gate authorizes building, not trading
+
+**Verification:** `uv run pytest tests/signal_delivery/test_readiness.py
+tests/signal_delivery/test_config.py tests/signal_delivery/test_cli.py`
+
+**Dependencies:** Tasks 1-7
+
+**Files:** `src/nomicronix/signal_delivery/readiness.py`,
+`src/nomicronix/signal_delivery/config.py`, `src/nomicronix/signal_delivery/__main__.py`,
+`config/delivery.toml`, `tests/signal_delivery/test_readiness.py`

@@ -71,12 +71,15 @@ uv run python -m nomicronix.signal_delivery deliver \
 # 5. Mark open paper trades at a fresh price
 uv run python -m nomicronix.signal_delivery tick --price BTC/USDT=94.50
 
-# 6. Generate a fresh proposal and evaluate it against the risk limits
+# 6. Check the execution promotion gate (0 ready, 2 not ready)
+uv run python -m nomicronix.signal_delivery readiness
+
+# 7. Generate a fresh proposal and evaluate it against the risk limits
 uv run python examples/make_proposal.py
 uv run python -m nomicronix.risk_engine check \
     --proposal data/proposal.json --price BTC/USDT=100
 
-# 7. Backtest a strategy over the stored candles
+# 8. Backtest a strategy over the stored candles
 uv run python -m nomicronix.backtesting run \
     --strategy examples.strategies:SmaCross \
     --symbol BTC/USDT --timeframe 1h \
@@ -211,6 +214,9 @@ uv run python -m nomicronix.signal_delivery deliver \
 # Mark open paper trades at a price, then report delivery and P&L
 uv run python -m nomicronix.signal_delivery tick --price BTC/USDT=94.50
 uv run python -m nomicronix.signal_delivery report
+
+# Check whether the paper record is strong enough to build execution
+uv run python -m nomicronix.signal_delivery readiness
 ```
 
 Rejected signals are recorded in the outbox but never sent as trade alerts, and
@@ -252,8 +258,11 @@ typing and a coverage floor. No CI job needs exchange credentials.
   wired yet.
 - `signal-delivery` paper fills are full and fee-free at the planned price, with
   stops checked before targets. It has no scheduler or retry daemon, and Telegram
-  is its only remote sink.
-- `execution` does not exist yet. Nothing in this repository can place an order.
+  is its only remote sink. Its `readiness` command gates `execution` on at least
+  30 closed trades over 28 days with positive expectancy after assumed costs.
+- `execution` does not exist yet. It cannot be built until the `readiness` gate
+  passes and its own spec is approved. Nothing in this repository can place an
+  order.
 
 ## License
 
