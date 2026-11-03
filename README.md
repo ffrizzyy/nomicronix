@@ -17,7 +17,7 @@ This repository currently contains the five foundation modules:
 | `backtesting` | Built | Replays candles through a strategy with fees, slippage and walk-forward validation |
 | `strategy-engine` | Built | Turns stored candles into causal, validated signal candidates |
 | `signal-delivery` | Built | Risk-gated alerts plus an honest paper-trade ledger |
-| `execution` | Not started | Paper, human-approved, then autonomous order placement |
+| `execution` | Spec written, blocked | Spot order placement, gated on the paper record and human approval |
 
 The full capability map lives in [`SPEC.md`](SPEC.md).
 

@@ -10,7 +10,7 @@ autonomous execution on a centralized exchange within strict risk limits.
 | risk-engine | Position sizing, max drawdown and daily loss limits, kill switch. Deterministic code, no AI | none | SPEC-risk-engine.md | Built and tested (see [docs/risk-engine.md](docs/risk-engine.md)) |
 | strategy-engine | AI/ML signal generation: signal, confidence, rationale | market-data | SPEC-strategy-engine.md | Built and tested (see [docs/strategy-engine.md](docs/strategy-engine.md)) |
 | signal-delivery | Telegram and log delivery, paper-trade P&L tracking | strategy-engine, risk-engine | SPEC-signal-delivery.md | Built and tested (see [docs/signal-delivery.md](docs/signal-delivery.md)) |
-| execution | Order placement in stages: paper, human-approved, autonomous within risk limits | risk-engine, signal-delivery | SPEC-execution.md | Not started |
+| execution | Order placement in stages: paper, human-approved, autonomous within risk limits | risk-engine, signal-delivery | SPEC-execution.md | Spec written; implementation blocked on signal-delivery readiness and owner approval |
 
 **Build order:** market-data → backtesting, risk-engine → strategy-engine → signal-delivery → execution
 
