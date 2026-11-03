@@ -57,7 +57,8 @@ CREATE TABLE IF NOT EXISTS approvals (
     stop_price     TEXT NOT NULL,
     target_price   TEXT NOT NULL,
     created_at_ms  INTEGER NOT NULL,
-    consumed_at_ms INTEGER
+    consumed_at_ms INTEGER,
+    filled_quantity TEXT NOT NULL DEFAULT '0'
 );
 
 CREATE TABLE IF NOT EXISTS decisions (
@@ -118,6 +119,15 @@ class RiskStateStore:
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute("PRAGMA foreign_keys=ON")
         self._conn.executescript(_SCHEMA)
+        self._migrate()
+
+    def _migrate(self) -> None:
+        """Add v1.1 columns to databases created by v1."""
+        columns = {str(row["name"]) for row in self._conn.execute("PRAGMA table_info(approvals)")}
+        if "filled_quantity" not in columns:
+            self._conn.execute(
+                "ALTER TABLE approvals ADD COLUMN filled_quantity TEXT NOT NULL DEFAULT '0'"
+            )
 
     def close(self) -> None:
         self._conn.close()
@@ -281,7 +291,19 @@ class RiskStateStore:
             target_price=Decimal(str(row["target_price"])),
             created_at_ms=int(row["created_at_ms"]),
             consumed_at_ms=None if row["consumed_at_ms"] is None else int(row["consumed_at_ms"]),
+            filled_quantity=Decimal(str(row["filled_quantity"])),
         )
+
+    def expire_approval(self, signal_id: str, now_ms: int) -> None:
+        """Void the unfilled remainder of an approval, e.g. after a cancel."""
+        with self.transaction() as conn:
+            cursor = conn.execute(
+                "UPDATE approvals SET consumed_at_ms = ?"
+                " WHERE signal_id = ? AND consumed_at_ms IS NULL",
+                (now_ms, signal_id),
+            )
+            if cursor.rowcount != 1:
+                raise ApprovalError(f"approval {signal_id} is missing or already consumed")
 
     def persist_fill(
         self,
@@ -289,16 +311,29 @@ class RiskStateStore:
         signal_id: str,
         fill: Fill,
         now_ms: int,
+        *,
+        approval: Approval | None = None,
     ) -> None:
         with self.transaction() as conn:
             if fill.action is FillAction.OPEN:
+                if approval is None:
+                    raise ApprovalError("an OPEN fill requires an approval")
+                filled = approval.filled_quantity + fill.quantity
+                consumed_at = now_ms if filled == approval.quantity else None
                 cursor = conn.execute(
-                    "UPDATE approvals SET consumed_at_ms = ?"
-                    " WHERE signal_id = ? AND consumed_at_ms IS NULL",
-                    (now_ms, signal_id),
+                    """
+                    UPDATE approvals
+                       SET filled_quantity = ?, consumed_at_ms = ?
+                     WHERE signal_id = ?
+                       AND consumed_at_ms IS NULL
+                       AND filled_quantity = ?
+                    """,
+                    (str(filled), consumed_at, signal_id, str(approval.filled_quantity)),
                 )
                 if cursor.rowcount != 1:
-                    raise ApprovalError(f"approval {signal_id} is missing or already consumed")
+                    raise ApprovalError(
+                        f"approval {signal_id} is missing, already consumed or changed"
+                    )
             self._save_state(conn, state, now_ms)
 
     def decision_count(self) -> int:

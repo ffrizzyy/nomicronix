@@ -7,6 +7,7 @@ from decimal import Decimal
 
 from nomicronix.risk_engine.engine import evaluate
 from nomicronix.risk_engine.models import (
+    Approval,
     Fill,
     FillAction,
     Instrument,
@@ -98,7 +99,15 @@ class RiskService:
         now_ms: int | None = None,
     ) -> PortfolioState:
         now = self._now(now_ms)
+        if fill.quantity <= 0:
+            raise ApprovalError("fill quantity must be positive")
+        if fill.price <= 0:
+            raise ApprovalError("fill price must be positive")
+        if fill.fee < 0:
+            raise ApprovalError("fill fee must not be negative")
+
         state = self._load(now)
+        approval: Approval | None = None
         if fill.action is FillAction.OPEN:
             approval = self._store.load_approval(signal_id)
             if approval is None:
@@ -107,8 +116,11 @@ class RiskService:
                 raise ApprovalError(f"approval {signal_id} was already consumed")
             if approval.symbol != fill.symbol:
                 raise ApprovalError("open fill symbol does not match the approval")
-            if approval.quantity != fill.quantity:
-                raise ApprovalError("v1 requires a full fill: quantity must match approval")
+            remaining = approval.quantity - approval.filled_quantity
+            if fill.quantity > remaining:
+                raise ApprovalError(
+                    f"open fill quantity {fill.quantity} exceeds the remaining {remaining}"
+                )
             state.apply_open(
                 signal_id,
                 fill,
@@ -117,8 +129,12 @@ class RiskService:
             )
         else:
             state.apply_close(signal_id, fill)
-        self._store.persist_fill(state, signal_id, fill, now)
+        self._store.persist_fill(state, signal_id, fill, now, approval=approval)
         return state
+
+    def expire_approval(self, signal_id: str, now_ms: int | None = None) -> None:
+        """Void an approval's unfilled remainder after an order is canceled."""
+        self._store.expire_approval(signal_id, self._now(now_ms))
 
     def engage_kill_switch(
         self,

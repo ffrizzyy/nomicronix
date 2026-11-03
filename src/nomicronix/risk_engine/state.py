@@ -119,8 +119,6 @@ class PortfolioState:
     ) -> None:
         if fill.action is not FillAction.OPEN:
             raise ValueError("apply_open requires an OPEN fill")
-        if fill.symbol in self.positions:
-            raise ValueError(f"position already open for {fill.symbol}")
         if fill.quantity <= 0 or fill.price <= 0:
             raise ValueError("open fill quantity and price must be positive")
         if fill.fee < 0:
@@ -128,17 +126,37 @@ class PortfolioState:
         if stop_price <= 0 or target_price <= 0 or stop_price >= fill.price:
             raise ValueError("open fill requires a stop below the fill price")
 
+        existing = self.positions.get(fill.symbol)
+        if existing is not None and existing.signal_id != signal_id:
+            raise ValueError(f"position already open for {fill.symbol}")
+
         self.cash -= fill.quantity * fill.price + fill.fee
+        if existing is None:
+            self.positions[fill.symbol] = Position(
+                symbol=fill.symbol,
+                quantity=fill.quantity,
+                entry_price=fill.price,
+                stop_price=stop_price,
+                target_price=target_price,
+                current_price=fill.price,
+                opened_at_ms=fill.filled_at_ms,
+                signal_id=signal_id,
+                entry_fee=fill.fee,
+            )
+            return
+
+        total = existing.quantity + fill.quantity
         self.positions[fill.symbol] = Position(
             symbol=fill.symbol,
-            quantity=fill.quantity,
-            entry_price=fill.price,
+            quantity=total,
+            entry_price=(existing.entry_price * existing.quantity + fill.price * fill.quantity)
+            / total,
             stop_price=stop_price,
             target_price=target_price,
             current_price=fill.price,
-            opened_at_ms=fill.filled_at_ms,
+            opened_at_ms=existing.opened_at_ms,
             signal_id=signal_id,
-            entry_fee=fill.fee,
+            entry_fee=existing.entry_fee + fill.fee,
         )
 
     def apply_close(self, signal_id: str, fill: Fill) -> None:
@@ -152,18 +170,34 @@ class PortfolioState:
             raise ValueError(f"no open position for signal {signal_id}")
         if fill.symbol != position.symbol:
             raise ValueError("close fill symbol does not match the position")
-        if fill.quantity != position.quantity:
-            raise ValueError("v1 requires a full close: quantity must match the position")
-        if fill.price <= 0:
-            raise ValueError("close fill price must be positive")
+        if fill.quantity <= 0 or fill.price <= 0:
+            raise ValueError("close fill quantity and price must be positive")
         if fill.fee < 0:
             raise ValueError("fill fee must not be negative")
+        if fill.quantity > position.quantity:
+            raise ValueError("close quantity exceeds the open position")
+
+        if fill.quantity == position.quantity:
+            allocated_entry_fee = position.entry_fee
+            del self.positions[position.symbol]
+        else:
+            allocated_entry_fee = position.entry_fee * fill.quantity / position.quantity
+            self.positions[position.symbol] = Position(
+                symbol=position.symbol,
+                quantity=position.quantity - fill.quantity,
+                entry_price=position.entry_price,
+                stop_price=position.stop_price,
+                target_price=position.target_price,
+                current_price=fill.price,
+                opened_at_ms=position.opened_at_ms,
+                signal_id=position.signal_id,
+                entry_fee=position.entry_fee - allocated_entry_fee,
+            )
 
         self.cash += fill.quantity * fill.price - fill.fee
         self.realized_pnl_today += (
-            (fill.price - position.entry_price) * fill.quantity - position.entry_fee - fill.fee
+            (fill.price - position.entry_price) * fill.quantity - allocated_entry_fee - fill.fee
         )
-        del self.positions[position.symbol]
 
     def engage_kill(self, reason: str, now_ms: int, engaged_by: str) -> None:
         if self.kill_switch is None:

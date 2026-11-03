@@ -229,3 +229,4 @@ class Approval:
     target_price: Decimal
     created_at_ms: int
     consumed_at_ms: int | None
+    filled_quantity: Decimal = Decimal(0)

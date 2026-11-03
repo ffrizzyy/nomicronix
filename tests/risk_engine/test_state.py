@@ -108,11 +108,11 @@ def test_open_requires_stop_below_fill_price() -> None:
         )
 
 
-def test_close_requires_full_quantity() -> None:
+def test_close_rejects_more_than_the_open_position() -> None:
     state = PortfolioState.new(Decimal("1000"), NOW_MS)
     state.apply_open("sig-1", open_fill(), stop_price=Decimal("95"), target_price=Decimal("115"))
     with pytest.raises(ValueError):
-        state.apply_close("sig-1", close_fill(quantity="0.5"))
+        state.apply_close("sig-1", close_fill(quantity="1.5"))
 
 
 def test_resume_requires_exact_phrase() -> None:
