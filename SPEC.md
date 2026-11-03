@@ -7,7 +7,7 @@ autonomous execution on a centralized exchange within strict risk limits.
 |---|---|---|---|---|
 | market-data | Historical and live OHLCV, order book and funding data via a unified exchange adapter | none | SPEC-market-data.md | Built, pending your local checks (see SPEC-market-data.md) |
 | backtesting | Strategy simulation with fees, slippage and walk-forward validation | market-data | SPEC-backtesting.md | Not started |
-| risk-engine | Position sizing, max drawdown and daily loss limits, kill switch. Deterministic code, no AI | none | SPEC-risk-engine.md | Not started |
+| risk-engine | Position sizing, max drawdown and daily loss limits, kill switch. Deterministic code, no AI | none | SPEC-risk-engine.md | Spec written, awaiting approval |
 | strategy-engine | AI/ML signal generation: signal, confidence, rationale | market-data | SPEC-strategy-engine.md | Not started |
 | signal-delivery | Telegram and log delivery, paper-trade P&L tracking | strategy-engine, risk-engine | SPEC-signal-delivery.md | Not started |
 | execution | Order placement in stages: paper, human-approved, autonomous within risk limits | risk-engine, signal-delivery | SPEC-execution.md | Not started |
