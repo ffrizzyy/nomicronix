@@ -8,14 +8,14 @@ never bypasses its risk layer.
 future order must pass through a deterministic risk check. There is no
 "confidence high enough to skip the limits" path.
 
-This repository currently contains the three foundation modules:
+This repository currently contains the four foundation modules:
 
 | Module | Status | What it does |
 |---|---|---|
 | `market-data` | Built | Downloads and stores gap-free OHLCV candles from a ccxt exchange |
 | `risk-engine` | Built | Sizes positions, enforces daily/drawdown/exposure limits, owns the kill switch |
 | `backtesting` | Built | Replays candles through a strategy with fees, slippage and walk-forward validation |
-| `strategy-engine` | Not started | AI/ML signal generation |
+| `strategy-engine` | Built | Turns stored candles into causal, validated signal candidates |
 | `signal-delivery` | Not started | Telegram/log delivery and paper-trade tracking |
 | `execution` | Not started | Paper, human-approved, then autonomous order placement |
 
@@ -34,8 +34,8 @@ The full capability map lives in [`SPEC.md`](SPEC.md).
 - **Append-only audit.** Every risk decision, approved or rejected, is journaled
   before it is returned.
 - **No secrets in git.** Exchange API keys are read from environment variables by
-  the modules that eventually need them. The three built modules need no keys:
-  market-data uses public endpoints, and risk/backtesting are offline.
+  the modules that eventually need them. The four built modules need no keys:
+  market-data uses public endpoints, and risk/backtesting/strategy are offline.
 - **Backtests are research.** A backtest result is never a live trading signal.
   Out-of-sample walk-forward metrics are the headline, not the best in-sample
   number.
@@ -54,12 +54,19 @@ uv run python -m nomicronix.market_data backfill \
 # 2. Inspect the risk account (creates data/risk.sqlite with 1,000 USDT paper cash)
 uv run python -m nomicronix.risk_engine status
 
-# 3. Generate a fresh proposal and evaluate it against the risk limits
+# 3. Scan the stored candles for causal signal candidates
+uv run python -m nomicronix.strategy_engine scan \
+    --strategy examples.strategy_models:SmaCross \
+    --symbol BTC/USDT --timeframe 1h \
+    --since 2025-01-01 --until 2025-02-01 \
+    --out results/btc-signals.json
+
+# 4. Generate a fresh proposal and evaluate it against the risk limits
 uv run python examples/make_proposal.py
 uv run python -m nomicronix.risk_engine check \
     --proposal data/proposal.json --price BTC/USDT=100
 
-# 4. Backtest a strategy over the stored candles
+# 5. Backtest a strategy over the stored candles
 uv run python -m nomicronix.backtesting run \
     --strategy examples.strategies:SmaCross \
     --symbol BTC/USDT --timeframe 1h \
@@ -73,21 +80,26 @@ uv run python -m nomicronix.backtesting run \
 
 ```
 config/risk.toml              committed conservative risk limits
+config/strategy.toml          committed scan defaults (confidence, TTL, history)
 data/                         local SQLite databases (gitignored)
 docs/market-data.md           market-data guide
 docs/risk-engine.md           risk-engine guide
 docs/backtesting.md           backtesting guide
+docs/strategy-engine.md       strategy-engine guide
 examples/make_proposal.py     writes a fresh, valid proposal for a manual check
 examples/proposal.json        static proposal schema sample (timestamp is stale)
 examples/strategies.py        SmaCross, BuyAndHold and AlwaysFlat examples
+examples/strategy_models.py   built-in and custom signal proposers
 src/nomicronix/
   market_data/                ccxt adapter, SQLite store, backfill, live updater
   risk_engine/                pure rules, sizing, state, SQLite journal, CLI
   backtesting/                broker, engine, metrics, walk-forward, CLI
+  strategy_engine/            causal proposers, scan loop, results, CLI
 tests/
   market_data/                offline fakes plus an opt-in network contract test
   risk_engine/
   backtesting/
+  strategy_engine/
 tasks/                        implementation plan and task checklist
 SPEC*.md                      approved module specs and capability map
 ```
@@ -143,6 +155,30 @@ Results are deterministic JSON. Existing output is never overwritten without
 `--force`. See [`docs/backtesting.md`](docs/backtesting.md) for the fill model,
 cost assumptions and walk-forward rules.
 
+### strategy-engine
+
+```bash
+# Built-in SMA crossover
+uv run python -m nomicronix.strategy_engine scan \
+    --strategy examples.strategy_models:SmaCross \
+    --param fast=20 --param slow=50 \
+    --symbol BTC/USDT --timeframe 1h \
+    --since 2025-01-01 --until 2025-02-01 \
+    --min-confidence 0.5 --ttl 5m \
+    --out results/btc-signals.json
+
+# Built-in Donchian breakout
+uv run python -m nomicronix.strategy_engine scan \
+    --strategy examples.strategy_models:DonchianBreakout \
+    --symbol BTC/USDT --timeframe 1h \
+    --since 2025-01-01 --until 2025-02-01 \
+    --out results/btc-donchian.json
+```
+
+Signals are proposals, not orders. Every candidate must still pass
+`risk-engine`. See [`docs/strategy-engine.md`](docs/strategy-engine.md) for the
+proposer contract, causality rules and output schema.
+
 ## Development
 
 ```bash
@@ -150,6 +186,7 @@ uv sync
 uv run pytest -m "not network"                    # full offline suite
 uv run pytest tests/risk_engine --cov=nomicronix.risk_engine --cov-fail-under=90
 uv run pytest tests/backtesting --cov=nomicronix.backtesting --cov-fail-under=90
+uv run pytest tests/strategy_engine --cov=nomicronix.strategy_engine --cov-fail-under=90
 uv run ruff format --check src tests examples
 uv run ruff check src tests examples
 uv run mypy src/nomicronix
@@ -168,6 +205,10 @@ typing and a coverage floor. No CI job needs exchange credentials.
   fixed 25% notional sizer. Out-of-sample results are still research evidence.
 - `risk-engine` v1 consumes one full fill per approval. Partial fills are deferred
   to `execution`.
+- `strategy-engine` has no portfolio state: a signal can fire while a position is
+  already open, and duplicate/exposure rules decide downstream. Its confidences
+  are fixed rule scores, not calibrated probabilities, and no AI provider is
+  wired yet.
 - `execution` does not exist yet. Nothing in this repository can place an order.
 
 ## License
