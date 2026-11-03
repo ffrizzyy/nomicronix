@@ -14,7 +14,7 @@ from nomicronix.execution.models import (
     intent_id_for,
 )
 
-NOW_MS = 1_735_689_600_000  # 2025-01-01T00:00:00Z
+NOW_MS = 1_735_693_200_000  # 2025-01-01T01:00:00Z, the default signal close
 HOUR_MS = 3_600_000
 
 
@@ -31,6 +31,7 @@ def make_intent(
     expires_at_ms: int = NOW_MS + HOUR_MS,
     state: IntentState = IntentState.SHADOW,
     filled_quantity: str = "0",
+    average_fill_price: str | None = None,
     exchange_order_id: str | None = None,
 ) -> OrderIntent:
     return OrderIntent(
@@ -47,6 +48,7 @@ def make_intent(
         expires_at_ms=expires_at_ms,
         state=state,
         filled_quantity=Decimal(filled_quantity),
+        average_fill_price=(None if average_fill_price is None else Decimal(average_fill_price)),
         exchange_order_id=exchange_order_id,
     )
 

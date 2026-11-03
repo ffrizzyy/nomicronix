@@ -2,20 +2,25 @@
 
 from __future__ import annotations
 
+import time
 from collections.abc import Callable
 from pathlib import Path
 
 from nomicronix.execution.adapter import ExchangeAdapter
 from nomicronix.execution.config import ExecutionConfig
+from nomicronix.execution.flatten import FlattenResult, flatten
 from nomicronix.execution.models import (
     EventType,
+    IntentError,
     IntentState,
     OrderEvent,
     OrderIntent,
+    Reconciliation,
     Ticker,
     intent_id_for,
     utc_now_ms,
 )
+from nomicronix.execution.reconcile import reconcile
 from nomicronix.execution.shadow import (
     approved_state,
     build_intent,
@@ -24,6 +29,7 @@ from nomicronix.execution.shadow import (
     slippage_bps,
 )
 from nomicronix.execution.store import ExecutionStore
+from nomicronix.execution.submit import SubmissionResult, Submitter
 from nomicronix.risk_engine.models import Side, TradeProposal
 from nomicronix.risk_engine.service import RiskService
 from nomicronix.signal_delivery.signals import load_signals
@@ -41,12 +47,14 @@ class ExecutionService:
         config: ExecutionConfig,
         *,
         clock: Callable[[], int] = utc_now_ms,
+        sleep: Callable[[float], None] = time.sleep,
     ) -> None:
         self._risk = risk
         self._store = store
         self._adapter = adapter
         self._config = config
         self._clock = clock
+        self._sleep = sleep
 
     @property
     def config(self) -> ExecutionConfig:
@@ -146,6 +154,36 @@ class ExecutionService:
     def shadow_file(self, path: str | Path) -> list[OrderIntent]:
         return [self.shadow(signal) for signal in load_signals(path)]
 
+    def reconcile(self, now_ms: int | None = None) -> Reconciliation:
+        """Compare the journal, the exchange and the risk book."""
+        now = self._clock() if now_ms is None else now_ms
+        return reconcile(self._risk, self._store, self._adapter, now)
+
+    def submit(self, intent_id: str, confirmation: str, *, live: bool) -> SubmissionResult:
+        """Submit one awaiting intent, but only after every gate passes."""
+        submitter = Submitter(
+            self._risk,
+            self._store,
+            self._adapter,
+            self._config,
+            clock=self._clock,
+            sleep=self._sleep,
+            reconciler=self.reconcile,
+        )
+        return submitter.submit(intent_id, confirmation, live=live)
+
+    def flatten(self, confirmation: str) -> FlattenResult:
+        """Cancel every open order and close every open position."""
+        return flatten(
+            self._risk,
+            self._store,
+            self._adapter,
+            self._config,
+            confirmation,
+            clock=self._clock,
+            sleep=self._sleep,
+        )
+
     def status(self) -> dict[str, object]:
         intents = self._store.list_intents()
         by_state = {state.value: 0 for state in IntentState}
@@ -162,7 +200,7 @@ class ExecutionService:
     def show(self, intent_id: str) -> tuple[OrderIntent, list[OrderEvent]]:
         intent = self._store.get_intent(intent_id)
         if intent is None:
-            raise ValueError(f"unknown intent {intent_id}")
+            raise IntentError(f"unknown intent {intent_id}")
         return intent, self._store.events_for(intent_id)
 
     def summary(self, intent: OrderIntent) -> dict[str, object]:

@@ -36,6 +36,7 @@ CREATE TABLE IF NOT EXISTS intents (
     expires_at_ms    INTEGER NOT NULL,
     state            TEXT NOT NULL,
     filled_quantity  TEXT NOT NULL DEFAULT '0',
+    average_fill_price TEXT,
     exchange_order_id TEXT
 );
 
@@ -103,6 +104,9 @@ def _intent_from_row(row: sqlite3.Row) -> OrderIntent:
             expires_at_ms=int(row["expires_at_ms"]),
             state=state,
             filled_quantity=_decimal(row["filled_quantity"]),
+            average_fill_price=(
+                None if row["average_fill_price"] is None else _decimal(row["average_fill_price"])
+            ),
             exchange_order_id=(
                 None if row["exchange_order_id"] is None else str(row["exchange_order_id"])
             ),
@@ -195,8 +199,9 @@ class ExecutionStore:
                 INSERT OR IGNORE INTO intents
                     (intent_id, signal_id, symbol, side, quantity, entry_price,
                      stop_price, target_price, approved_notional, created_at_ms,
-                     expires_at_ms, state, filled_quantity, exchange_order_id)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     expires_at_ms, state, filled_quantity, average_fill_price,
+                     exchange_order_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     intent.intent_id,
@@ -212,6 +217,7 @@ class ExecutionStore:
                     intent.expires_at_ms,
                     str(intent.state),
                     str(intent.filled_quantity),
+                    (None if intent.average_fill_price is None else str(intent.average_fill_price)),
                     intent.exchange_order_id,
                 ),
             )
@@ -231,6 +237,7 @@ class ExecutionStore:
         *,
         state: IntentState | None = None,
         filled_quantity: Decimal | None = None,
+        average_fill_price: Decimal | None = None,
         exchange_order_id: str | None = None,
         event: OrderEvent | None = None,
     ) -> None:
@@ -242,6 +249,9 @@ class ExecutionStore:
         if filled_quantity is not None:
             assignments.append("filled_quantity = ?")
             values.append(str(filled_quantity))
+        if average_fill_price is not None:
+            assignments.append("average_fill_price = ?")
+            values.append(str(average_fill_price))
         if exchange_order_id is not None:
             assignments.append("exchange_order_id = ?")
             values.append(exchange_order_id)

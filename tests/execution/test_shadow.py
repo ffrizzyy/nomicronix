@@ -1,50 +1,12 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 from decimal import Decimal
 
 from nomicronix.execution.config import ExecutionConfig
 from nomicronix.execution.models import EventType, IntentState
-from nomicronix.execution.service import ExecutionService
-from nomicronix.execution.store import ExecutionStore
-from nomicronix.risk_engine.models import RiskLimits
-from nomicronix.risk_engine.service import RiskService
-from nomicronix.risk_engine.store import RiskStateStore
-from tests.execution.fakes import NOW_MS, FakeAdapter
+from tests.execution.fakes import NOW_MS
+from tests.execution.harness import build
 from tests.signal_delivery.fakes import make_candidate, write_signals
-
-
-@dataclass
-class Harness:
-    service: ExecutionService
-    store: ExecutionStore
-    risk_store: RiskStateStore
-    adapter: FakeAdapter
-    config: ExecutionConfig
-
-    def close(self) -> None:
-        self.store.close()
-        self.risk_store.close()
-
-
-def build(
-    *,
-    config: ExecutionConfig | None = None,
-    limits: RiskLimits | None = None,
-) -> Harness:
-    active = config if config is not None else ExecutionConfig()
-    adapter = FakeAdapter()
-    store = ExecutionStore(":memory:")
-    risk_store = RiskStateStore(":memory:")
-    risk = RiskService(
-        risk_store,
-        limits if limits is not None else RiskLimits(),
-        initial_cash=Decimal("1000"),
-        clock=lambda: NOW_MS,
-    )
-    adapter.set_ticker("BTC/USDT", bid="100", ask="100.1", at_ms=NOW_MS)
-    service = ExecutionService(risk, store, adapter, active, clock=lambda: NOW_MS)
-    return Harness(service, store, risk_store, adapter, active)
 
 
 def test_an_approved_signal_becomes_a_shadow_intent() -> None:

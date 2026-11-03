@@ -119,7 +119,9 @@ class EventType(StrEnum):
     CANCELED = "canceled"
     REJECTED = "rejected"
     FAILED = "failed"
+    REFUSED = "refused"
     RECONCILED = "reconciled"
+    FLATTENED = "flattened"
 
 
 TERMINAL_STATES = frozenset(
@@ -154,6 +156,7 @@ class OrderIntent:
     expires_at_ms: int
     state: IntentState
     filled_quantity: Decimal = Decimal(0)
+    average_fill_price: Decimal | None = None
     exchange_order_id: str | None = None
 
     def __post_init__(self) -> None:
@@ -182,6 +185,11 @@ class OrderIntent:
             raise ValueError("expires_at_ms must be after created_at_ms")
         if not Decimal(0) <= self.filled_quantity <= self.quantity:
             raise ValueError("filled_quantity must be inside [0, quantity]")
+        if self.filled_quantity > 0:
+            if self.average_fill_price is None or self.average_fill_price <= 0:
+                raise ValueError("a filled intent needs a positive average fill price")
+        elif self.average_fill_price is not None:
+            raise ValueError("an unfilled intent must not carry an average fill price")
 
     @property
     def terminal(self) -> bool:
