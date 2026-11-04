@@ -7,8 +7,14 @@ from decimal import Decimal
 import ccxt
 import pytest
 
-from nomicronix.execution.adapter import CcxtAdapter
-from nomicronix.execution.models import ExchangeError, OrderStatus
+from nomicronix.execution.adapter import (
+    CcxtAdapter,
+    build_adapter,
+    credentials_from_env,
+    masked_key,
+)
+from nomicronix.execution.config import ExecutionConfig
+from nomicronix.execution.models import CredentialError, ExchangeError, OrderStatus, utc_now_ms
 from tests.execution.fakes import NOW_MS, FakeAdapter, make_order
 
 
@@ -20,6 +26,9 @@ class FakeClient:
         self.calls: list[tuple[object, ...]] = []
         self.raise_on: dict[str, Exception] = {}
         self.permissions_supported = True
+        self.permissions: set[str] = {"spot", "withdraw"}
+        self.options: dict[str, object] = {"defaultType": "spot"}
+        self.time_ms: int | None = NOW_MS
         self.balance = {
             "BTC": {"free": 0.5, "used": 0.0, "total": 0.5},
             "USDT": {"free": 400.0, "used": 0.0, "total": 400.0},
@@ -103,7 +112,14 @@ class FakeClient:
     def fetch_permissions(self) -> dict[str, object]:
         if not self.permissions_supported:
             raise ccxt.NotSupported("permissions are not exposed")
-        return {"permissions": ["spot", "withdraw"]}
+        self._raise("fetch_permissions")
+        return {"permissions": sorted(self.permissions)}
+
+    def fetch_time(self) -> int:
+        self._raise("fetch_time")
+        if self.time_ms is None:
+            raise ccxt.NotSupported("time is not exposed")
+        return self.time_ms
 
 
 def adapter(client: FakeClient | None = None) -> CcxtAdapter:
@@ -118,7 +134,12 @@ def test_the_fake_satisfies_the_protocol() -> None:
 
 def test_domain_import_does_not_load_ccxt() -> None:
     code = (
-        "import sys; import nomicronix.execution.models, nomicronix.execution.store; "
+        "import sys; "
+        "import nomicronix.execution.models, nomicronix.execution.store, "
+        "nomicronix.execution.config, nomicronix.execution.service, "
+        "nomicronix.execution.shadow, nomicronix.execution.submit, "
+        "nomicronix.execution.fills, nomicronix.execution.reconcile, "
+        "nomicronix.execution.flatten; "
         "assert 'ccxt' not in sys.modules, 'domain imported ccxt'"
     )
     subprocess.run([sys.executable, "-c", code], check=True)
@@ -294,3 +315,300 @@ def test_fake_adapter_can_script_every_terminal_status() -> None:
     created = fake.create_market_order("BTC/USDT", "buy", Decimal("1"), "nx-sig-1")
     assert created.status is OrderStatus.CANCELED
     assert created.filled_quantity == Decimal("0.4")
+
+
+def raw_order(**overrides: object) -> dict[str, object]:
+    order: dict[str, object] = {
+        "id": "ex-1",
+        "clientOrderId": "nx-sig-1",
+        "symbol": "BTC/USDT",
+        "side": "buy",
+        "status": "open",
+        "amount": 1.0,
+        "filled": 0.0,
+        "average": None,
+        "fee": None,
+        "timestamp": NOW_MS,
+        "info": {"status": "NEW"},
+    }
+    order.update(overrides)
+    return order
+
+
+def test_market_type_falls_back_to_spot_without_options() -> None:
+    class Bare:
+        def fetch_ticker(self, symbol: str) -> dict[str, object]:
+            return {}
+
+    assert CcxtAdapter("binance", client=Bare()).market_type() == "spot"
+
+
+def test_a_ticker_missing_a_side_fails_closed() -> None:
+    client = FakeClient()
+    client.fetch_ticker = lambda symbol: {"bid": 1, "ask": 2, "last": None}  # type: ignore[method-assign]
+    with pytest.raises(ExchangeError) as caught:
+        adapter(client).fetch_ticker("BTC/USDT")
+    assert caught.value.code == "bad_ticker"
+
+
+def test_ticker_uses_the_local_clock_when_timestamp_is_absent() -> None:
+    client = FakeClient()
+
+    def ticker(symbol: str) -> dict[str, object]:
+        return {"symbol": symbol, "bid": 1, "ask": 2, "last": 1.5}
+
+    client.fetch_ticker = ticker  # type: ignore[method-assign]
+    assert adapter(client).fetch_ticker("BTC/USDT").at_ms > 0
+
+
+def test_permissions_return_an_empty_set_when_absent_or_malformed() -> None:
+    client = FakeClient()
+    client.fetch_permissions = None  # type: ignore[assignment]
+    assert adapter(client).fetch_permissions() == set()
+
+    malformed = FakeClient()
+    malformed.fetch_permissions = lambda: {"permissions": "spot"}  # type: ignore[method-assign]
+    assert adapter(malformed).fetch_permissions() == set()
+
+
+def test_permission_probe_errors_are_treated_as_unknown() -> None:
+    client = FakeClient()
+    client.raise_on["fetch_permissions"] = ccxt.NetworkError("offline")
+    assert adapter(client).fetch_permissions() == set()
+
+
+def test_every_adapter_operation_maps_network_errors() -> None:
+    client = FakeClient()
+    client.raise_on.update(
+        {
+            "fetch_order": ccxt.NetworkError("offline"),
+            "cancel_order": ccxt.NetworkError("offline"),
+            "fetch_open_orders": ccxt.NetworkError("offline"),
+            "fetch_balance": ccxt.NetworkError("offline"),
+        }
+    )
+    exchange = adapter(client)
+    for call in (
+        lambda: exchange.fetch_order("ex-1", "BTC/USDT"),
+        lambda: exchange.cancel_order("ex-1", "BTC/USDT"),
+        lambda: exchange.open_orders(),
+        lambda: exchange.balances(),
+    ):
+        with pytest.raises(ExchangeError) as caught:
+            call()
+        assert caught.value.code == "network_error"
+
+
+def test_an_order_without_amount_uses_the_filled_quantity() -> None:
+    client = FakeClient()
+    client.orders["ex-1"] = raw_order(amount=None, filled=1.0, average=100.0, status="closed")
+    order = adapter(client).fetch_order("ex-1", "BTC/USDT")
+    assert order.quantity == Decimal("1.0")
+
+
+def test_an_order_without_quantity_fails_closed() -> None:
+    client = FakeClient()
+    client.orders["ex-1"] = raw_order(amount=None, filled=0.0)
+    with pytest.raises(ExchangeError) as caught:
+        adapter(client).fetch_order("ex-1", "BTC/USDT")
+    assert caught.value.code == "bad_order"
+
+
+def test_an_order_filled_beyond_its_amount_fails_closed() -> None:
+    client = FakeClient()
+    client.orders["ex-1"] = raw_order(amount=1.0, filled=2.0, average=100.0)
+    with pytest.raises(ExchangeError) as caught:
+        adapter(client).fetch_order("ex-1", "BTC/USDT")
+    assert caught.value.code == "bad_order"
+
+
+def test_average_is_derived_from_cost_when_missing() -> None:
+    client = FakeClient()
+    client.orders["ex-1"] = raw_order(
+        filled=2.0, amount=2.0, average=None, price=None, cost=200.0, status="closed"
+    )
+    order = adapter(client).fetch_order("ex-1", "BTC/USDT")
+    assert order.average_price == Decimal("100")
+
+
+def test_a_fill_without_any_price_fails_closed() -> None:
+    client = FakeClient()
+    client.orders["ex-1"] = raw_order(
+        filled=1.0, amount=1.0, average=None, price=None, cost=None, status="closed"
+    )
+    with pytest.raises(ExchangeError) as caught:
+        adapter(client).fetch_order("ex-1", "BTC/USDT")
+    assert caught.value.code == "unknown_order_fill"
+
+
+def test_fee_lists_are_summed() -> None:
+    client = FakeClient()
+    client.orders["ex-1"] = raw_order(
+        filled=1.0,
+        amount=1.0,
+        average=100.0,
+        status="closed",
+        fee=[{"cost": 0.1}, {"cost": 0.2}, {"currency": "USDT"}, "junk"],
+    )
+    assert adapter(client).fetch_order("ex-1", "BTC/USDT").fee == Decimal("0.3")
+
+
+def test_an_order_without_an_exchange_id_fails_closed() -> None:
+    client = FakeClient()
+    client.orders["ex-1"] = raw_order(id=None)
+    with pytest.raises(ExchangeError) as caught:
+        adapter(client).fetch_order("ex-1", "BTC/USDT")
+    assert caught.value.code == "bad_order"
+
+
+def test_an_order_without_any_client_id_fails_closed() -> None:
+    client = FakeClient()
+    client.orders["ex-1"] = raw_order(clientOrderId=None, info={})
+    with pytest.raises(ExchangeError) as caught:
+        adapter(client).fetch_order("ex-1", "BTC/USDT")
+    assert caught.value.code == "bad_order"
+
+
+def test_client_id_can_come_from_info_and_timestamp_from_the_last_trade() -> None:
+    client = FakeClient()
+    client.orders["ex-1"] = raw_order(
+        clientOrderId=None,
+        timestamp=None,
+        lastTradeTimestamp=NOW_MS + 5,
+        info={"status": "NEW", "clientOrderId": "nx-from-info"},
+    )
+    order = adapter(client).fetch_order("ex-1", "BTC/USDT")
+    assert order.client_order_id == "nx-from-info"
+    assert order.updated_at_ms == NOW_MS + 5
+    assert order.raw_status == "NEW"
+
+
+def test_balances_require_a_total_map_and_skip_nulls() -> None:
+    client = FakeClient()
+    client.fetch_balance = lambda: {}  # type: ignore[method-assign]
+    with pytest.raises(ExchangeError) as caught:
+        adapter(client).balances()
+    assert caught.value.code == "bad_balance"
+
+    client.fetch_balance = lambda: {"total": {"BTC": 0.5, "ETH": None}}  # type: ignore[method-assign]
+    assert adapter(client).balances() == {"BTC": Decimal("0.5")}
+
+
+def test_server_time_handles_missing_method_and_not_supported() -> None:
+    class NoTime:
+        pass
+
+    assert CcxtAdapter("binance", client=NoTime()).server_time_ms() is None
+
+    client = FakeClient()
+    client.time_ms = None
+    assert adapter(client).server_time_ms() is None
+
+
+def test_server_time_errors_are_mapped() -> None:
+    client = FakeClient()
+    client.raise_on["fetch_time"] = ccxt.NetworkError("offline")
+    with pytest.raises(ExchangeError) as caught:
+        adapter(client).server_time_ms()
+    assert caught.value.code == "network_error"
+
+
+def test_the_constructor_can_build_the_real_client(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: dict[str, object] = {}
+
+    def factory(options: dict[str, object]) -> FakeClient:
+        captured.update(options)
+        return FakeClient()
+
+    monkeypatch.setattr(ccxt, "binance", factory, raising=False)
+    exchange = CcxtAdapter("binance")
+    assert exchange.market_type() == "spot"
+    assert captured["options"] == {"defaultType": "spot"}
+
+
+def test_credentials_are_read_only_from_the_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("NOMICRONIX_BINANCE_API_KEY", "abcd1234")
+    monkeypatch.setenv("NOMICRONIX_BINANCE_API_SECRET", "shh")
+    assert credentials_from_env() == ("abcd1234", "shh")
+    assert masked_key("abcd1234") == "***1234"
+    assert masked_key("abc") == "***"
+
+
+def test_missing_credentials_are_a_credential_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("NOMICRONIX_BINANCE_API_KEY", raising=False)
+    monkeypatch.delenv("NOMICRONIX_BINANCE_API_SECRET", raising=False)
+    with pytest.raises(CredentialError, match="missing exchange credentials"):
+        credentials_from_env()
+
+
+def install_exchange(monkeypatch: pytest.MonkeyPatch, client: FakeClient) -> dict[str, object]:
+    captured: dict[str, object] = {}
+
+    def factory(options: dict[str, object]) -> FakeClient:
+        captured.update(options)
+        return client
+
+    monkeypatch.setattr(ccxt, "binance", factory, raising=False)
+    return captured
+
+
+def test_build_adapter_requires_spot(monkeypatch: pytest.MonkeyPatch) -> None:
+    client = FakeClient()
+    client.options = {"defaultType": "future"}
+    install_exchange(monkeypatch, client)
+    config = ExecutionConfig()
+    with pytest.raises(ExchangeError) as caught:
+        build_adapter(config, require_private=False)
+    assert caught.value.code == "non_spot_market"
+
+
+def test_build_adapter_rejects_a_key_that_can_withdraw(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("NOMICRONIX_BINANCE_API_KEY", "abcd1234")
+    monkeypatch.setenv("NOMICRONIX_BINANCE_API_SECRET", "shh")
+    client = FakeClient()
+    install_exchange(monkeypatch, client)
+    with pytest.raises(CredentialError, match="trade-only"):
+        build_adapter(ExecutionConfig(), require_private=True)
+
+
+def test_build_adapter_passes_keys_and_checks_the_clock(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("NOMICRONIX_BINANCE_API_KEY", "abcd1234")
+    monkeypatch.setenv("NOMICRONIX_BINANCE_API_SECRET", "shh")
+    client = FakeClient()
+    client.permissions = {"spot"}
+    client.time_ms = utc_now_ms() + 10_000
+    captured = install_exchange(monkeypatch, client)
+
+    with pytest.raises(ExchangeError) as caught:
+        build_adapter(ExecutionConfig(), require_private=True)
+    assert caught.value.code == "clock_skew"
+    assert captured["apiKey"] == "abcd1234"
+    assert captured["apiSecret"] == "shh"
+
+
+def test_build_adapter_returns_a_spot_adapter(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("NOMICRONIX_BINANCE_API_KEY", "abcd1234")
+    monkeypatch.setenv("NOMICRONIX_BINANCE_API_SECRET", "shh")
+    client = FakeClient()
+    client.permissions = {"spot"}
+    client.time_ms = utc_now_ms()
+    install_exchange(monkeypatch, client)
+    exchange = build_adapter(ExecutionConfig(), require_private=True)
+    assert exchange.market_type() == "spot"
+
+
+def test_build_adapter_rejects_an_unknown_exchange(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(ccxt, "not-an-exchange", None, raising=False)
+    with pytest.raises(ExchangeError) as caught:
+        build_adapter(ExecutionConfig(exchange="not-an-exchange"), require_private=False)
+    assert caught.value.code == "unknown_exchange"

@@ -206,3 +206,74 @@ def test_intent_id_must_be_derived_from_the_signal_id() -> None:
             expires_at_ms=NOW_MS + 1,
             state=IntentState.SHADOW,
         )
+
+
+def test_payload_of_filters_by_event_type(tmp_path) -> None:
+    store = open_store(tmp_path)
+    try:
+        intent = make_intent()
+        store.create_intent(intent)
+        store.append_event(OrderEvent(intent.intent_id, EventType.SHADOWED, NOW_MS, {"a": "1"}))
+        store.append_event(OrderEvent(intent.intent_id, EventType.FILLED, NOW_MS, {"b": "2"}))
+        assert store.payload_of(intent.intent_id, EventType.SHADOWED) == [{"a": "1"}]
+        assert store.payload_of(intent.intent_id, EventType.FILLED) == [{"b": "2"}]
+    finally:
+        store.close()
+
+
+def test_open_orders_can_be_filtered_by_symbol(tmp_path) -> None:
+    store = open_store(tmp_path)
+    try:
+        store.put_order(make_order())
+        store.put_order(
+            make_order(
+                client_order_id=intent_id_for("sig-2"),
+                exchange_order_id="ex-2",
+                symbol="ETH/USDT",
+            )
+        )
+        assert len(store.open_orders()) == 2
+        assert [order.symbol for order in store.open_orders("ETH/USDT")] == ["ETH/USDT"]
+    finally:
+        store.close()
+
+
+def test_update_without_fields_is_a_store_error(tmp_path) -> None:
+    store = open_store(tmp_path)
+    try:
+        with pytest.raises(StoreError, match="at least one field"):
+            store.update_intent(intent_id_for("sig-1"))
+    finally:
+        store.close()
+
+
+def test_a_corrupt_order_is_a_store_error(tmp_path) -> None:
+    path = tmp_path / "execution.sqlite"
+    store = ExecutionStore(path)
+    store.put_order(make_order())
+    store.close()
+
+    with sqlite3.connect(str(path)) as conn:
+        conn.execute("UPDATE orders SET filled_quantity = 'not-a-number'")
+    reopened = ExecutionStore(path)
+    try:
+        with pytest.raises(StoreError, match="corrupt"):
+            reopened.list_orders()
+    finally:
+        reopened.close()
+
+
+def test_an_unknown_order_status_is_a_store_error(tmp_path) -> None:
+    path = tmp_path / "execution.sqlite"
+    store = ExecutionStore(path)
+    store.put_order(make_order())
+    store.close()
+
+    with sqlite3.connect(str(path)) as conn:
+        conn.execute("UPDATE orders SET status = 'teleported'")
+    reopened = ExecutionStore(path)
+    try:
+        with pytest.raises(StoreError, match="unknown status"):
+            reopened.list_orders()
+    finally:
+        reopened.close()

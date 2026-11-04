@@ -7,17 +7,23 @@ appear in an error message.
 
 from __future__ import annotations
 
+import os
 import re
 from decimal import Decimal
 from typing import Any, Protocol, runtime_checkable
 
+from nomicronix.execution.config import ExecutionConfig
 from nomicronix.execution.models import (
+    CredentialError,
     ExchangeError,
     ExchangeOrder,
     OrderStatus,
     Ticker,
     utc_now_ms,
 )
+
+API_KEY_ENV = "NOMICRONIX_BINANCE_API_KEY"
+API_SECRET_ENV = "NOMICRONIX_BINANCE_API_SECRET"
 
 _REDACT = re.compile(r"(api[_-]?key|signature|secret|token)=([^&\s]+)", re.IGNORECASE)
 
@@ -67,7 +73,9 @@ class CcxtAdapter:
         if client is None:
             import ccxt
 
-            client = getattr(ccxt, exchange_id)({"enableRateLimit": True})
+            client = getattr(ccxt, exchange_id)(
+                {"enableRateLimit": True, "options": {"defaultType": "spot"}}
+            )
         self._client = client
 
     def market_type(self) -> str:
@@ -271,3 +279,55 @@ def _map_error(exc: Exception, operation: str) -> ExchangeError:
     else:
         code = "exchange_rejected"
     return ExchangeError(f"{operation} failed: {_redact(str(exc))}", code=code)
+
+
+def credentials_from_env() -> tuple[str, str]:
+    """Read trade-only credentials. Never accept them as flags or config."""
+    api_key = os.environ.get(API_KEY_ENV, "").strip()
+    secret = os.environ.get(API_SECRET_ENV, "").strip()
+    if not api_key or not secret:
+        raise CredentialError(
+            f"missing exchange credentials: set {API_KEY_ENV} and {API_SECRET_ENV}"
+        )
+    return api_key, secret
+
+
+def masked_key(api_key: str) -> str:
+    """Identify a key without revealing more than its last four characters."""
+    return f"***{api_key[-4:]}" if len(api_key) >= 4 else "***"
+
+
+def build_adapter(config: ExecutionConfig, *, require_private: bool) -> CcxtAdapter:
+    """Build the real adapter after the spot, clock and key-permission checks."""
+    import ccxt
+
+    options: dict[str, Any] = {
+        "enableRateLimit": True,
+        "options": {"defaultType": config.market_type},
+    }
+    if require_private:
+        api_key, secret = credentials_from_env()
+        options["apiKey"] = api_key
+        options["apiSecret"] = secret
+
+    exchange_class = getattr(ccxt, config.exchange, None)
+    if exchange_class is None:
+        raise ExchangeError(f"ccxt has no exchange {config.exchange!r}", code="unknown_exchange")
+    adapter = CcxtAdapter(config.exchange, client=exchange_class(options))
+
+    if adapter.market_type() != "spot":
+        raise ExchangeError("exchange market type is not spot", code="non_spot_market")
+
+    if require_private:
+        permissions = adapter.fetch_permissions()
+        if permissions & {"withdraw", "withdrawal"}:
+            raise CredentialError("the exchange key can withdraw; use a trade-only key")
+        server_time = adapter.server_time_ms()
+        if server_time is not None:
+            skew = abs(server_time - utc_now_ms())
+            if skew > config.max_clock_skew_ms:
+                raise ExchangeError(
+                    f"local clock is {skew} ms away from the exchange; sync it first",
+                    code="clock_skew",
+                )
+    return adapter

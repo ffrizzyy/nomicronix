@@ -8,7 +8,7 @@ never bypasses its risk layer.
 future order must pass through a deterministic risk check. There is no
 "confidence high enough to skip the limits" path.
 
-This repository currently contains the five foundation modules:
+This repository currently contains the six foundation modules:
 
 | Module | Status | What it does |
 |---|---|---|
@@ -17,7 +17,7 @@ This repository currently contains the five foundation modules:
 | `backtesting` | Built | Replays candles through a strategy with fees, slippage and walk-forward validation |
 | `strategy-engine` | Built | Turns stored candles into causal, validated signal candidates |
 | `signal-delivery` | Built | Risk-gated alerts plus an honest paper-trade ledger |
-| `execution` | Spec written, blocked | Spot order placement, gated on the paper record and human approval |
+| `execution` | Built (shadow + human-approved) | Spot order placement, gated on the paper record, four live switches and human approval |
 
 The full capability map lives in [`SPEC.md`](SPEC.md).
 
@@ -33,11 +33,14 @@ The full capability map lives in [`SPEC.md`](SPEC.md).
   survives restarts and clears only with the exact phrase `RESUME TRADING`.
 - **Append-only audit.** Every risk decision, approved or rejected, is journaled
   before it is returned.
-- **No secrets in git.** Exchange API keys are read from environment variables by
-  the modules that eventually need them. The five built modules need no trading
-  keys: market-data uses public endpoints, risk/backtesting/strategy are offline,
-  and signal-delivery only reads optional Telegram credentials from the
-  environment.
+- **No secrets in git.** Exchange API keys are read from environment variables,
+  never from flags or config files. Only `execution` needs trading keys, and only
+  for its private commands; market-data uses public endpoints,
+  risk/backtesting/strategy are offline, and signal-delivery only reads optional
+  Telegram credentials.
+- **Four live switches.** A real order needs the exact phrase `PLACE ORDER`,
+  `--live`, `dry_run = false` and `allow_live = true` with stage `approved`. The
+  committed config keeps `dry_run = true`, so a fresh checkout cannot trade.
 - **Backtests are research.** A backtest result is never a live trading signal.
   Out-of-sample walk-forward metrics are the headline, not the best in-sample
   number.
@@ -74,12 +77,17 @@ uv run python -m nomicronix.signal_delivery tick --price BTC/USDT=94.50
 # 6. Check the execution promotion gate (0 ready, 2 not ready)
 uv run python -m nomicronix.signal_delivery readiness
 
-# 7. Generate a fresh proposal and evaluate it against the risk limits
+# 7. Build execution intents in shadow mode (no private call, no credentials)
+uv run python -m nomicronix.execution shadow \
+    --signals results/btc-signals.json
+uv run python -m nomicronix.execution status
+
+# 8. Generate a fresh proposal and evaluate it against the risk limits
 uv run python examples/make_proposal.py
 uv run python -m nomicronix.risk_engine check \
     --proposal data/proposal.json --price BTC/USDT=100
 
-# 8. Backtest a strategy over the stored candles
+# 9. Backtest a strategy over the stored candles
 uv run python -m nomicronix.backtesting run \
     --strategy examples.strategies:SmaCross \
     --symbol BTC/USDT --timeframe 1h \
@@ -95,12 +103,14 @@ uv run python -m nomicronix.backtesting run \
 config/risk.toml              committed conservative risk limits
 config/strategy.toml          committed scan defaults (confidence, TTL, history)
 config/delivery.toml          committed delivery defaults (sinks, filters)
+config/execution.toml         committed safe execution defaults (dry_run, shadow)
 data/                         local SQLite databases (gitignored)
 docs/market-data.md           market-data guide
 docs/risk-engine.md           risk-engine guide
 docs/backtesting.md           backtesting guide
 docs/strategy-engine.md       strategy-engine guide
 docs/signal-delivery.md       signal-delivery guide
+docs/execution.md             execution guide (gates, reconciliation, panic path)
 examples/deliver_signals.py   delivers a candidate on paper and prints the report
 examples/make_proposal.py     writes a fresh, valid proposal for a manual check
 examples/proposal.json        static proposal schema sample (timestamp is stale)
@@ -112,12 +122,14 @@ src/nomicronix/
   backtesting/                broker, engine, metrics, walk-forward, CLI
   strategy_engine/            causal proposers, scan loop, results, CLI
   signal_delivery/            risk-gated outbox, sinks, paper ledger, CLI
+  execution/                  intents, ccxt adapter, submit, reconcile, flatten, CLI
 tests/
   market_data/                offline fakes plus an opt-in network contract test
   risk_engine/
   backtesting/
   strategy_engine/
   signal_delivery/
+  execution/                  scripted fake exchange plus an opt-in public ticker test
 tasks/                        implementation plan and task checklist
 SPEC*.md                      approved module specs and capability map
 ```
@@ -225,6 +237,36 @@ are full and fee-free. See
 [`docs/signal-delivery.md`](docs/signal-delivery.md) for the outbox, replay and
 paper-trade rules.
 
+### execution
+
+```bash
+# Stage 1: create intents from an approved signal file (no credentials needed)
+uv run python -m nomicronix.execution shadow --signals results/btc-signals.json
+
+# Inspect the order journal
+uv run python -m nomicronix.execution status
+uv run python -m nomicronix.execution show --intent nx-sma-cross:BTC/USDT:1h:1735776000000
+
+# Stage 2: submit one intent. Needs the exact phrase, --live,
+# dry_run = false and allow_live = true with stage = "approved".
+export NOMICRONIX_BINANCE_API_KEY=...
+export NOMICRONIX_BINANCE_API_SECRET=...
+uv run python -m nomicronix.execution submit \
+    --intent nx-sma-cross:BTC/USDT:1h:1735776000000 \
+    --confirm "PLACE ORDER" --live
+
+# Cancel one order, verify the books, or flatten everything
+uv run python -m nomicronix.execution cancel --intent nx-...
+uv run python -m nomicronix.execution reconcile
+uv run python -m nomicronix.execution flatten --confirm "FLATTEN NOW"
+```
+
+The committed [`config/execution.toml`](config/execution.toml) is safe by
+default: `dry_run = true`, stage `shadow`, and `allow_live = false`. Every submit
+re-checks risk, re-applies the slippage ceiling, and refuses while reconciliation
+is unclean. See [`docs/execution.md`](docs/execution.md) for the four live
+switches, the trade-only key checks and the panic path.
+
 ## Development
 
 ```bash
@@ -234,10 +276,12 @@ uv run pytest tests/risk_engine --cov=nomicronix.risk_engine --cov-fail-under=90
 uv run pytest tests/backtesting --cov=nomicronix.backtesting --cov-fail-under=90
 uv run pytest tests/strategy_engine --cov=nomicronix.strategy_engine --cov-fail-under=90
 uv run pytest tests/signal_delivery --cov=nomicronix.signal_delivery --cov-fail-under=90
+uv run pytest tests/execution -m "not network" --cov=nomicronix.execution --cov-fail-under=90
 uv run ruff format --check src tests examples
 uv run ruff check src tests examples
 uv run mypy src/nomicronix
 uv run pytest tests/market_data -m network        # opt-in, hits a real exchange
+uv run pytest tests/execution -m network          # opt-in, public ticker only
 ```
 
 CI runs the offline suite on Python 3.12 and 3.13, with formatting, lint, strict
@@ -250,8 +294,9 @@ typing and a coverage floor. No CI job needs exchange credentials.
 - `backtesting` handles one symbol and one timeframe per run, long only, with full
   fills. It does not simulate partial fills or `risk-engine` limits; it uses a
   fixed 25% notional sizer. Out-of-sample results are still research evidence.
-- `risk-engine` v1 consumes one full fill per approval. Partial fills are deferred
-  to `execution`.
+- `risk-engine` v1.1 accepts partial fills one piece at a time and consumes an
+  approval only when the cumulative quantity reaches the approved size. A
+  canceled remainder must be expired with `expire_approval`.
 - `strategy-engine` has no portfolio state: a signal can fire while a position is
   already open, and duplicate/exposure rules decide downstream. Its confidences
   are fixed rule scores, not calibrated probabilities, and no AI provider is
@@ -260,9 +305,11 @@ typing and a coverage floor. No CI job needs exchange credentials.
   stops checked before targets. It has no scheduler or retry daemon, and Telegram
   is its only remote sink. Its `readiness` command gates `execution` on at least
   30 closed trades over 28 days with positive expectancy after assumed costs.
-- `execution` does not exist yet. It cannot be built until the `readiness` gate
-  passes and its own spec is approved. Nothing in this repository can place an
-  order.
+- `execution` supports stages 1 and 2 only: shadow intents and one owner-approved
+  spot market order at a time. It is Binance-through-ccxt only, long only, with
+  no OCO brackets or exchange-side stops. Stage 3 autonomy is out of scope.
+  `signal-delivery readiness` still exits `2` on this checkout, so live trading
+  remains an owner decision, not a default.
 
 ## License
 

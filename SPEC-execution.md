@@ -2,10 +2,11 @@
 
 Module id: `execution` (depends on: risk-engine, signal-delivery)
 
-**Status: spec written, implementation blocked.** The project-wide rule is that
-`execution` is not built until `signal-delivery readiness` exits `0` **and** the
-owner explicitly approves this spec for implementation. The gate is measurable;
-see `SPEC-signal-delivery.md`.
+**Status: implemented for stages 1 and 2.** `execution` was built after an
+explicit owner decision; live submission is still gated by
+`signal-delivery readiness`, the four live switches and human confirmation. The
+committed config keeps `dry_run = true`, so a fresh checkout cannot place an
+order. Stage 3 remains out of scope.
 
 ## Objective
 
@@ -61,6 +62,11 @@ All prices, quantities and fees are `Decimal`; times are UTC epoch milliseconds.
 | `created_at_ms` | `int` | Signal candle close |
 | `expires_at_ms` | `int` | Signal expiry |
 | `state` | `str` | `shadow`, `awaiting_approval`, `submitted`, `filled`, `canceled`, `rejected`, `failed` |
+| `filled_quantity` | `Decimal` | Cumulative exchange fill, `0 <= filled <= quantity` |
+| `average_fill_price` | `Decimal \| None` | Cumulative average, required once filled |
+| `exchange_order_id` | `str \| None` | Exchange id once known |
+
+`remaining_quantity` is derived, never stored: `quantity - filled_quantity`.
 
 **`ExchangeOrder`** — the exchange's view: client order id, exchange order id,
 status, filled quantity, average price, fee, timestamps and raw status text.
@@ -68,7 +74,9 @@ status, filled quantity, average price, fee, timestamps and raw status text.
 **`OrderEvent`** — append-only journal row: intent id, event type, timestamp and
 payload JSON. Event types are `intent_created`, `shadowed`, `approved`,
 `submitted`, `partially_filled`, `filled`, `canceled`, `rejected`, `failed`,
-`reconciled`.
+`refused`, `reconciled` and `flattened`. `refused` records a guard that stopped a
+command before the exchange call; `flattened` records a panic-path action, even
+for an exchange order with no local intent.
 
 **`Reconciliation`** — the result of comparing open orders and balances with the
 journal: matched orders, unknown orders, unknown positions and a `clean` flag.
@@ -113,8 +121,8 @@ These are the reason the module exists. Each is enforced, not documented away.
    approved quantity.
 4. Apply the expiry and slippage guards. Record the intent and a `shadowed`
    event. Make no private call.
-5. `report` compares shadow intents with the paper ledger so the owner can see
-   how often fulfilment would have differed.
+5. `status` and `show` expose the intents and their journal; the owner compares
+   them with the paper ledger to see how often fulfilment would have differed.
 
 ### Stage 2: human-approved
 
@@ -129,24 +137,28 @@ These are the reason the module exists. Each is enforced, not documented away.
 5. Poll until the order is terminal (`closed`, `canceled`, `rejected`,
    `expired`) or the configured timeout elapses. A timeout leaves the intent
    `submitted`; `reconcile` resolves it later. Never resubmit automatically.
-6. Aggregate fills and call `RiskService.record_fill` **once** with the filled
-   quantity, average price and summed fee.
+6. Aggregate fills and call `RiskService.record_fill` once per observed exchange
+   increment with the filled quantity, average price and summed fee.
 7. Journal the terminal event and print a deterministic summary.
 
 ### Cancellation and flatten
 
-- `cancel --intent <id>` cancels an open order and journals the result.
+- `cancel --intent <id>` cancels an open order and journals the result. It refuses
+  an unknown intent, a terminal intent or a `submitted` intent with no exchange
+  order, and it expires any remaining approval.
 - `flatten --confirm "FLATTEN NOW"` cancels every open order and market-sells
   every open position at the exchange's best bid after re-reading the risk
   status. It is the panic button; it still reports fills through `record_fill`.
-  It never bypasses size limits because it only reduces exposure.
+  It never bypasses size limits because it only reduces exposure, and it works
+  while the kill switch is engaged for the same reason. Unknown exchange orders
+  are canceled too and journaled under a synthetic `nx-unknown-{client_id}` intent.
 
 ## Partial fills and the risk contract
 
 `risk-engine` v1.1 accepts any positive piece of an approval and consumes it only
 when the cumulative filled quantity reaches the approved quantity. Spot market
 orders can fill in pieces or only partially before cancellation, so execution
-aggregates the pieces and reports them once:
+aggregates the pieces and reports each increment once:
 
 - `record_fill` accepts a CLOSE or OPEN fill with
   `0 < quantity <= approved_quantity - filled_quantity` (a CLOSE is bounded by
@@ -157,8 +169,10 @@ aggregates the pieces and reports them once:
   no later fill can use it.
 
 That change has landed in `risk-engine` v1.1 and is covered by
-`tests/risk_engine/test_partial_fills.py`. Execution must never report a partial
-fill as a full one.
+`tests/risk_engine/test_partial_fills.py`. Execution aggregates exchange pieces
+in `fills.py`, stores the cumulative quantity and average, and reports only the
+increment to risk. A fill that regresses, overfills, or arrives for another
+intent fails closed before risk sees it.
 
 ## Exchange adapter
 
@@ -176,10 +190,16 @@ class ExchangeAdapter(Protocol):
     def cancel_order(self, order_id: str, symbol: str) -> ExchangeOrder: ...
     def open_orders(self, symbol: str | None = None) -> list[ExchangeOrder]: ...
     def balances(self) -> dict[str, Decimal]: ...
+    def server_time_ms(self) -> int | None: ...
 ```
 
 - `ccxt` is only imported by the real adapter. Tests use a fake adapter and never
   touch the network.
+- `build_adapter(config, require_private=...)` validates spot mode and clock skew;
+  private commands additionally require environment credentials and refuse a key
+  that exposes `withdraw` permission.
+- `credentials_from_env` reads only `NOMICRONIX_BINANCE_API_KEY` and
+  `NOMICRONIX_BINANCE_API_SECRET`; `masked_key` prints the last four characters.
 - `enableRateLimit = True`; retries are bounded and never retry a submit unless
   the client order id makes it idempotent. A submit retry with the same client
   id is safe; a new id is not.
@@ -230,10 +250,11 @@ uv run python -m nomicronix.execution flatten --confirm "FLATTEN NOW"
 | `--risk-db` | Risk database; default `data/risk.sqlite` |
 | `--risk-config` | Risk limits; default `config/risk.toml` |
 | `--config` | Execution config; default `config/execution.toml` |
+| `--cash` | Initial cash for a fresh risk database; default `1000` |
 | `--intent` | Intent id for `show`, `submit`, `cancel` |
 | `--confirm` | Exact confirmation phrase |
 | `--live` | Required, together with `dry_run = false`, to submit |
-| `--json` | Machine-readable output for `status`, `show`, `reconcile` |
+| `--json` | Machine-readable output for `status`, `show`, `submit`, `cancel`, `reconcile` and `flatten` |
 
 Exit codes:
 
@@ -256,34 +277,43 @@ Rejections and refusals are journaled, never silently dropped.
 exchange = "binance"
 market_type = "spot"
 dry_run = true
+allow_live = false
 stage = "shadow"
 max_slippage_bps = 50
 max_intent_age_ms = 300000
 order_timeout_ms = 60000
 poll_interval_ms = 1000
 max_clock_skew_ms = 2000
+quantity_step = "0.00001"
+min_quantity = "0.00001"
+min_notional = "10"
 
 [risk]
 require_kill_switch_clear = true
 ```
 
 Unknown keys, a non-spot `market_type`, `stage = "autonomous"` in this spec
-revision, negative bps or a `dry_run = false` file without an explicit
-`allow_live = true` are all rejected. `dry_run` defaults to `true`.
+revision, negative bps, a non-positive timeout or step, and a `dry_run = false`
+file without an explicit `allow_live = true` are all rejected. `dry_run`
+defaults to `true`. The three instrument keys are execution-side defaults until
+live exchange filters are fetched, so keep them conservative.
 
 ## Persistence
 
 One SQLite database at `data/execution.sqlite` (WAL):
 
 - `intents`: intent id (primary key), signal id, symbol, side, quantity, entry,
-  stop, target, approved notional, timestamps and state.
+  stop, target, approved notional, timestamps, state, cumulative filled quantity,
+  average fill price and exchange order id.
 - `orders`: intent id and exchange order id, status, filled quantity, average
   price, fee and last update time.
 - `events`: append-only journal with autoincrement id, intent id, event type,
   timestamp and payload JSON.
 
 Execution writes risk state only through `RiskService`. It never writes
-`risk_state`, `positions`, `approvals` or `journal` tables directly.
+`risk_state`, `positions`, `approvals` or `journal` tables directly. It reads
+open positions through the read-only `RiskService.positions()` and
+`has_open_position()` APIs added for this module.
 
 ## Reconciliation
 
@@ -326,18 +356,42 @@ Execution writes risk state only through `RiskService`. It never writes
 
 - Binance only, spot only, long only, market orders only.
 - Stage 3 autonomy is out of scope; this spec stops at human-approved orders.
-- Partial fills are supported by `risk-engine` v1.1; execution still has to
-  aggregate exchange pieces and report them exactly once.
+- Partial fills are aggregated per exchange increment; execution stores the
+  cumulative quantity and average and never reports a piece twice.
+- The exchange's live symbol filters are not fetched yet; `quantity_step`,
+  `min_quantity` and `min_notional` in the config are authoritative.
 - No portfolio margin, OCO brackets or exchange-side stops; protective stops stay
   in `signal-delivery`/`risk-engine` until a later spec adds exchange stops.
 - No multi-account, sub-account or portfolio rebalancing support.
 - Live trading is never risk-free, and nothing here is a profit guarantee.
 
+## Implementation notes
+
+Built in `src/nomicronix/execution/`:
+
+| File | Responsibility |
+|---|---|
+| `models.py` | Intents, orders, tickers, events, reconciliation, fill reports, errors, exit codes |
+| `config.py` | Strict TOML loading and the stage/`dry_run`/`allow_live` safety checks |
+| `store.py` | SQLite journal for intents, order snapshots and append-only events |
+| `adapter.py` | `ccxt` spot adapter, `FakeAdapter`, env credentials, spot/permission/skew checks |
+| `shadow.py` | Signal loading, risk re-check, expiry and slippage guards, intent creation |
+| `submit.py` | Four live gates, reconciliation, market submit, polling, no auto-resubmit |
+| `fills.py` | Incremental fill aggregation and approval consumption/expiry |
+| `reconcile.py` | Order and balance comparison, mismatch journaling, exit `3` |
+| `flatten.py` | Cancel-all and close-all panic path, kill-switch safe |
+| `service.py` | Wiring for `shadow`, `submit`, `reconcile`, `cancel`, `flatten` |
+| `__main__.py` | CLI, deterministic output, exit codes, JSON mode |
+
+Tests live in `tests/execution/` with a scripted `FakeAdapter` and a harness that
+builds a fresh risk account per test. The only network test is opt-in and reads a
+public ticker without credentials. Module coverage is above the 90% floor.
+
 ## Decisions taken for the spec's open questions
 
 | Question | Decision |
 |---|---|
-| When may execution be built | Only after `signal-delivery readiness` passes and the owner approves this spec |
+| When may execution be built | Built after an explicit owner decision; `readiness` remains the promotion gate for real money |
 | First stage | Shadow intents with no private call |
 | Order type | Spot market order with a slippage ceiling |
 | Approval | Exact phrase `PLACE ORDER` plus `dry_run = false` and `--live` |

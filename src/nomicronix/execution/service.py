@@ -8,6 +8,7 @@ from pathlib import Path
 
 from nomicronix.execution.adapter import ExchangeAdapter
 from nomicronix.execution.config import ExecutionConfig
+from nomicronix.execution.fills import FillReporter
 from nomicronix.execution.flatten import FlattenResult, flatten
 from nomicronix.execution.models import (
     EventType,
@@ -183,6 +184,19 @@ class ExecutionService:
             clock=self._clock,
             sleep=self._sleep,
         )
+
+    def cancel(self, intent_id: str) -> OrderIntent:
+        """Cancel one open order and journal whatever the exchange reports."""
+        intent = self._store.get_intent(intent_id)
+        if intent is None:
+            raise IntentError(f"unknown intent {intent_id}")
+        if intent.terminal:
+            raise IntentError(f"intent {intent_id} is {intent.state} and cannot be canceled")
+        if intent.exchange_order_id is None:
+            raise IntentError(f"intent {intent_id} has no exchange order to cancel")
+        order = self._adapter.cancel_order(intent.exchange_order_id, intent.symbol)
+        reporter = FillReporter(self._risk, self._store)
+        return reporter.apply(intent, order, now_ms=self._clock())
 
     def status(self) -> dict[str, object]:
         intents = self._store.list_intents()

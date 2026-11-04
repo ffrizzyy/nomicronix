@@ -7,7 +7,7 @@ import pytest
 from nomicronix.execution.models import ExchangeError, IntentState, OrderStatus
 from nomicronix.risk_engine.models import Fill, FillAction
 from nomicronix.risk_engine.store import ApprovalError
-from tests.execution.fakes import make_order
+from tests.execution.fakes import NOW_MS, make_intent, make_order
 from tests.execution.harness import build, live_config
 from tests.signal_delivery.fakes import make_candidate
 
@@ -179,5 +179,132 @@ def test_an_overfill_is_refused_before_risk_sees_it() -> None:
             harness.service.submit(intent.intent_id, "PLACE ORDER", live=True)
         assert caught.value.code == "overfilled"
         assert harness.risk.positions() == ()
+    finally:
+        harness.close()
+
+
+def test_a_reporter_refuses_an_order_for_another_intent() -> None:
+    from nomicronix.execution.fills import FillReporter
+
+    harness, _, intent = awaiting()
+    try:
+        reporter = FillReporter(harness.risk, harness.store)
+        with pytest.raises(ExchangeError) as caught:
+            reporter.apply(
+                intent,
+                make_order(client_order_id="nx-other"),
+                now_ms=NOW_MS,
+            )
+        assert caught.value.code == "wrong_order"
+        with pytest.raises(ExchangeError):
+            reporter.apply(
+                intent,
+                make_order(client_order_id=intent.intent_id, symbol="ETH/USDT"),
+                now_ms=NOW_MS,
+            )
+    finally:
+        harness.close()
+
+
+def test_a_reporter_refuses_a_regressed_fill() -> None:
+    from nomicronix.execution.fills import FillReporter
+
+    harness, _, _ = awaiting()
+    try:
+        filled = make_intent(
+            signal_id="sig-open",
+            state=IntentState.SUBMITTED,
+            filled_quantity="0.5",
+            average_fill_price="100",
+        )
+        reporter = FillReporter(harness.risk, harness.store)
+        with pytest.raises(ExchangeError) as caught:
+            reporter.apply(
+                filled,
+                make_order(
+                    client_order_id=filled.intent_id,
+                    status=OrderStatus.OPEN,
+                    filled_quantity="0.4",
+                    average_price="100",
+                ),
+                now_ms=NOW_MS,
+            )
+        assert caught.value.code == "fill_regressed"
+    finally:
+        harness.close()
+
+
+def test_a_reporter_refuses_a_backwards_fee() -> None:
+    from nomicronix.execution.fills import FillReporter
+
+    harness, _, _ = awaiting()
+    try:
+        submitted = make_intent(signal_id="sig-fee", state=IntentState.SUBMITTED)
+        harness.store.create_intent(submitted)
+        harness.store.put_order(
+            make_order(
+                client_order_id=submitted.intent_id,
+                status=OrderStatus.OPEN,
+                fee="0.2",
+            )
+        )
+        reporter = FillReporter(harness.risk, harness.store)
+        with pytest.raises(ExchangeError) as caught:
+            reporter.apply(
+                submitted,
+                make_order(
+                    client_order_id=submitted.intent_id,
+                    status=OrderStatus.OPEN,
+                    filled_quantity="0.5",
+                    average_price="100",
+                    fee="0.1",
+                ),
+                now_ms=NOW_MS,
+            )
+        assert caught.value.code == "bad_fill"
+    finally:
+        harness.close()
+
+
+def test_a_closed_order_with_a_short_fill_still_expires_the_remainder() -> None:
+    harness, signal, intent = awaiting()
+    try:
+        harness.adapter.queue(
+            intent.intent_id,
+            make_order(
+                client_order_id=intent.intent_id,
+                status=OrderStatus.CLOSED,
+                filled_quantity="0.4",
+                average_price="100",
+                fee="0.04",
+                raw_status="CLOSED",
+            ),
+        )
+        result = harness.service.submit(intent.intent_id, "PLACE ORDER", live=True)
+        assert result.intent.state is IntentState.CANCELED
+        approval = harness.risk_store.load_approval(signal.signal_id)
+        assert approval is not None and approval.consumed_at_ms is not None
+    finally:
+        harness.close()
+
+
+def test_a_rejection_after_a_partial_fill_is_journaled_as_failed() -> None:
+    harness, signal, intent = awaiting()
+    try:
+        harness.adapter.queue(
+            intent.intent_id,
+            make_order(
+                client_order_id=intent.intent_id,
+                status=OrderStatus.REJECTED,
+                filled_quantity="0.4",
+                average_price="100",
+                fee="0.04",
+                raw_status="REJECTED",
+            ),
+        )
+        result = harness.service.submit(intent.intent_id, "PLACE ORDER", live=True)
+        assert result.intent.state is IntentState.FAILED
+        approval = harness.risk_store.load_approval(signal.signal_id)
+        assert approval is not None and approval.consumed_at_ms is not None
     finally:
         harness.close()
