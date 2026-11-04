@@ -10,7 +10,7 @@ autonomous execution on a centralized exchange within strict risk limits.
 | risk-engine | Position sizing, max drawdown and daily loss limits, kill switch. Deterministic code, no AI | none | SPEC-risk-engine.md | Built and tested (see [docs/risk-engine.md](docs/risk-engine.md)) |
 | strategy-engine | AI/ML signal generation: signal, confidence, rationale | market-data | SPEC-strategy-engine.md | Built and tested (see [docs/strategy-engine.md](docs/strategy-engine.md)) |
 | signal-delivery | Telegram and log delivery, paper-trade P&L tracking | strategy-engine, risk-engine | SPEC-signal-delivery.md | Built and tested (see [docs/signal-delivery.md](docs/signal-delivery.md)) |
-| execution | Order placement in stages: paper, human-approved, autonomous within risk limits | risk-engine, signal-delivery | SPEC-execution.md | Spec written; implementation blocked on signal-delivery readiness and owner approval |
+| execution | Order placement in stages: shadow, human-approved, autonomous within risk limits | risk-engine, signal-delivery | SPEC-execution.md | Built and tested for stages 1-2 (see [docs/execution.md](docs/execution.md)); stage 3 out of scope |
 
 **Build order:** market-data → backtesting, risk-engine → strategy-engine → signal-delivery → execution
 
@@ -21,5 +21,7 @@ autonomous execution on a centralized exchange within strict risk limits.
 - Spot only. No leverage, no futures, until explicitly added to a module spec.
 - Module ids are stable and never renamed.
 - Every signal and every future order must pass through `risk-engine`. The AI proposes, risk limits decide.
-- `execution` is not built until `signal-delivery` has a paper-trading record that meets criteria defined in its spec.
+- `execution` is built for shadow and human-approved orders, but live submission
+  stays disabled until `signal-delivery` has a paper-trading record that meets the
+  criteria in its spec and the owner enables the four live switches.
 - Exchange API keys are trade-only with withdrawals disabled, loaded from environment variables, never committed.

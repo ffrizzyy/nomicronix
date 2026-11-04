@@ -108,8 +108,8 @@ These are the reason the module exists. Each is enforced, not documented away.
 9. **No secrets in output.** Keys and signed request URLs never appear in logs,
    errors, journals or result JSON.
 10. **Paper first.** `dry_run = true` is the default and refuses to submit until
-    the owner sets `dry_run = false` in the config **and** passes `--live` on the
-    command. Both are required.
+    the owner sets `dry_run = false`, sets `allow_live = true` with stage
+    `approved`, passes `--live` and types `PLACE ORDER`. All are required.
 
 ## Order flow
 
@@ -232,7 +232,7 @@ uv run python -m nomicronix.execution shadow --signals results/btc-signals.json
 uv run python -m nomicronix.execution status
 uv run python -m nomicronix.execution show --intent nx-sma-cross:BTC/USDT:1h:1735776000000
 
-# Stage 2: submit one intent (requires config dry_run=false and --live)
+# Stage 2: submit one intent (requires dry_run=false, allow_live=true, stage=approved and --live)
 uv run python -m nomicronix.execution submit \
     --intent nx-sma-cross:BTC/USDT:1h:1735776000000 \
     --confirm "PLACE ORDER" --live
@@ -394,7 +394,7 @@ public ticker without credentials. Module coverage is above the 90% floor.
 | When may execution be built | Built after an explicit owner decision; `readiness` remains the promotion gate for real money |
 | First stage | Shadow intents with no private call |
 | Order type | Spot market order with a slippage ceiling |
-| Approval | Exact phrase `PLACE ORDER` plus `dry_run = false` and `--live` |
+| Approval | Exact phrase `PLACE ORDER`, `--live`, `dry_run = false`, and `allow_live = true` with stage `approved` |
 | Idempotency | Client order id derived from the signal id |
 | Partial fills | Aggregate, report once; requires risk-engine v1.1 |
 | Reconciliation | Mandatory before submit; not clean means no trading |

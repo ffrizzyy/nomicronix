@@ -3,9 +3,11 @@
 Sources: `SPEC-execution.md` (approved by owner directive: use best practice).
 Module id: `execution`. Task list: `tasks/todo-execution.md`.
 
-**This plan is intentionally not started.** The project-wide gate requires
-`signal-delivery readiness` to pass and the owner to approve the spec before any
-code is written. Nothing below authorizes a live order.
+**Status: built for stages 1 and 2.** Tasks 1-8 are implemented and tested. The
+operational entry checks below remain open: `signal-delivery readiness` still
+exits `2`, and the trade-only key/IP restriction and owner approval of live
+stages are not recorded in this checkout. Nothing below authorizes a live order;
+the committed config keeps `dry_run = true`.
 
 ## Entry checklist
 
@@ -19,12 +21,12 @@ code is written. Nothing below authorizes a live order.
 
 | Question | Decision |
 |---|---|
-| Build gate | Readiness passes and the owner approves the spec |
+| Build gate | Readiness passes and the owner approves the spec; built after an explicit owner decision, with live submission still gated |
 | First stage | Shadow intents, no private calls |
 | Order type | Spot market order with a 50 bps default slippage ceiling |
 | Approval phrase | Exact `PLACE ORDER`; `dry_run = false` and `--live` also required |
 | Idempotency | Client order id derived from the signal id |
-| Partial fills | Aggregate and report once; blocked on risk-engine v1.1 |
+| Partial fills | Aggregate and report each increment once; risk-engine v1.1 implemented |
 | Reconciliation | Mandatory before submit; unclean means no trading |
 | Kill switch | Blocks submissions; `flatten` only reduces exposure |
 | Credentials | Environment-only, trade-only, redacted output |
@@ -43,8 +45,9 @@ code is written. Nothing below authorizes a live order.
   background task.
 - **Risk owns the books.** Execution reports fills through `RiskService` and
   never writes risk tables directly.
-- **Two switches for live.** `dry_run = false` in TOML and `--live` on the CLI.
-  Either one alone is inert.
+- **Four switches for live.** `dry_run = false` and `allow_live = true` with stage
+  `approved` in TOML, plus `--live` and the exact `PLACE ORDER` phrase on the
+  CLI. Any one alone is inert.
 
 ## Dependency Graph
 
@@ -75,7 +78,7 @@ Arrow direction is the build order. The fake adapter mirrors the real one.
 - Checkpoint: no private adapter method is called in shadow mode.
 
 ### Phase 3: human-approved submission
-- Exact-phrase approval, two live switches, submit/poll/cancel, fill reporting.
+- Exact-phrase approval, four live switches, submit/poll/cancel, fill reporting.
 - Checkpoint: double submit, stale intent, kill switch and slippage each refuse
   with the right exit code; partial fills follow the risk v1.1 contract.
 

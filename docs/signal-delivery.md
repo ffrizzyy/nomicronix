@@ -117,10 +117,10 @@ fills and slippage; those belong to `execution`.
 
 ## Execution promotion gate
 
-The repository rule is that `execution` is not built until the paper record is
-credible. `readiness` makes that rule executable: it scores the ledger against
-the `[promotion]` table and exits `0` only when every criterion passes, `2` when
-the record is not ready, and `1` on bad input.
+The execution module is built, but live submission is not enabled until the
+paper record is credible. `readiness` makes that rule executable: it scores the
+ledger against the `[promotion]` table and exits `0` only when every criterion
+passes, `2` when the record is not ready, and `1` on bad input.
 
 | Criterion | Default | Why it exists |
 |---|---|---|
