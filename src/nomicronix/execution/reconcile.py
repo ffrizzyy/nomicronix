@@ -43,11 +43,27 @@ def reconcile(
     detail: list[str] = []
 
     open_orders = adapter.open_orders()
+    open_by_client = {order.client_order_id: order for order in open_orders}
 
-    for intent in store.list_intents([IntentState.SUBMITTED]):
+    submitted = store.list_intents([IntentState.SUBMITTED])
+    for intent in submitted:
         if intent.exchange_order_id is None:
-            missing.append(intent.intent_id)
-            detail.append(f"missing_order: {intent.intent_id} has no exchange order id")
+            matched_open = open_by_client.get(intent.intent_id)
+            if matched_open is None:
+                missing.append(intent.intent_id)
+                detail.append(f"missing_order: {intent.intent_id} has no exchange order id")
+                continue
+            store.update_intent(
+                intent.intent_id,
+                exchange_order_id=matched_open.exchange_order_id,
+                event=OrderEvent(
+                    intent.intent_id,
+                    EventType.RECONCILED,
+                    now_ms,
+                    {"attached_exchange_order_id": matched_open.exchange_order_id},
+                ),
+            )
+            matched.append(intent.intent_id)
             continue
         try:
             adapter.fetch_order(intent.exchange_order_id, intent.symbol)
@@ -59,7 +75,7 @@ def reconcile(
         else:
             matched.append(intent.intent_id)
 
-    submitted_ids = {intent.intent_id for intent in store.list_intents([IntentState.SUBMITTED])}
+    submitted_ids = {intent.intent_id for intent in submitted}
     for order in open_orders:
         if order.client_order_id not in submitted_ids:
             unknown.append(order.client_order_id)

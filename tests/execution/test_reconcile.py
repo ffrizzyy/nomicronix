@@ -80,6 +80,32 @@ def test_a_missing_local_order_is_reported() -> None:
         harness.close()
 
 
+def test_a_submitted_intent_without_an_exchange_id_is_attached_by_client_id() -> None:
+    harness = build(config=live_config())
+    try:
+        intent = make_intent(signal_id="sig-reattach", state=IntentState.SUBMITTED)
+        harness.store.create_intent(intent)
+        order = make_order(
+            client_order_id=intent.intent_id,
+            exchange_order_id="ex-reattach",
+            status=OrderStatus.OPEN,
+        )
+        harness.adapter.orders[intent.intent_id] = order
+        harness.adapter.by_exchange_id["ex-reattach"] = order
+
+        report = harness.service.reconcile()
+        assert report.clean is True
+        assert report.matched == (intent.intent_id,)
+        stored = harness.store.get_intent(intent.intent_id)
+        assert stored is not None
+        assert stored.exchange_order_id == "ex-reattach"
+        events = harness.store.events_for(intent.intent_id)
+        assert [str(event.event_type) for event in events] == ["reconciled"]
+        assert events[0].payload == {"attached_exchange_order_id": "ex-reattach"}
+    finally:
+        harness.close()
+
+
 def test_an_unknown_exchange_order_is_reported_and_journaled() -> None:
     harness = build(config=live_config())
     try:
