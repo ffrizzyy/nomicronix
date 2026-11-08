@@ -4,9 +4,10 @@ Module id: `execution` (depends on: risk-engine, signal-delivery)
 
 **Status: implemented for stages 1 and 2.** `execution` was built after an
 explicit owner decision; live submission is still gated by
-`signal-delivery readiness`, the four live switches and human confirmation. The
-committed config keeps `dry_run = true`, so a fresh checkout cannot place an
-order. Stage 3 remains out of scope.
+`signal-delivery readiness` (a process gate that `submit` does not read itself),
+the four live switches and human confirmation. The committed config keeps
+`dry_run = true`, so a fresh checkout cannot place an order. Stage 3 remains out
+of scope.
 
 ## Objective
 
@@ -136,7 +137,9 @@ These are the reason the module exists. Each is enforced, not documented away.
    created the signal; the slippage ceiling, not the order type, is the control.
 5. Poll until the order is terminal (`closed`, `canceled`, `rejected`,
    `expired`) or the configured timeout elapses. A timeout leaves the intent
-   `submitted`; `reconcile` resolves it later. Never resubmit automatically.
+   `submitted`; `reconcile` attaches the exchange order id when the order is
+   visible and otherwise reports it as missing for the owner to resolve. Never
+   resubmit automatically.
 6. Aggregate fills and call `RiskService.record_fill` once per observed exchange
    increment with the filled quantity, average price and summed fee.
 7. Journal the terminal event and print a deterministic summary.
@@ -247,7 +250,7 @@ uv run python -m nomicronix.execution flatten --confirm "FLATTEN NOW"
 |---|---|
 | `--signals` | Approved signal file (`schema_version = 1`, `kind = "signals"`) |
 | `--execution-db` | Order journal; default `data/execution.sqlite` |
-| `--risk-db` | Risk database; default `data/risk.sqlite` |
+| `--risk-db` | Risk database; default `data/risk.sqlite` (shared with `signal-delivery`; use a dedicated file for live) |
 | `--risk-config` | Risk limits; default `config/risk.toml` |
 | `--config` | Execution config; default `config/execution.toml` |
 | `--cash` | Initial cash for a fresh risk database; default `1000` |

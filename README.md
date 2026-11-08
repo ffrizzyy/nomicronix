@@ -303,8 +303,10 @@ typing and a coverage floor. No CI job needs exchange credentials.
   wired yet.
 - `signal-delivery` paper fills are full and fee-free at the planned price, with
   stops checked before targets. It has no scheduler or retry daemon, and Telegram
-  is its only remote sink. Its `readiness` command gates `execution` on at least
-  30 closed trades over 28 days with positive expectancy after assumed costs.
+  is its only remote sink. Its `readiness` command is the process gate for
+  promoting `execution`: at least 30 closed trades over 28 days with positive
+  expectancy after assumed costs. `execution submit` does not read that ledger
+  itself, so the owner must run and honour it before enabling live trading.
 - `execution` supports stages 1 and 2 only: shadow intents and one owner-approved
   spot market order at a time. It is Binance-through-ccxt only, long only, with
   no OCO brackets or exchange-side stops. Stage 3 autonomy is out of scope.

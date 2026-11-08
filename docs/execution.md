@@ -21,9 +21,10 @@ Live submission is additionally disabled until `dry_run = false` and
 `allow_live = true` are both set in `config/execution.toml`. The repository config
 keeps `dry_run = true`, so a fresh checkout cannot place an order.
 
-`signal-delivery readiness` is still the promotion gate. It exits `0` only after
-at least 30 closed paper trades over 28 days with positive expectancy after
-assumed costs.
+`signal-delivery readiness` is the promotion gate. It exits `0` only after at
+least 30 closed paper trades over 28 days with positive expectancy after assumed
+costs. It is a process gate: `execution submit` does not read the paper ledger, so
+verify readiness yourself before enabling live trading.
 
 ## Safety gates
 
@@ -92,7 +93,7 @@ uv run python -m nomicronix.execution flatten --confirm "FLATTEN NOW"
 |---|---|
 | `--signals` | Strategy-engine result (`schema_version = 1`, `kind = "signals"`) |
 | `--execution-db` | Order journal; default `data/execution.sqlite` |
-| `--risk-db` | Risk database; default `data/risk.sqlite` |
+| `--risk-db` | Risk database; default `data/risk.sqlite` (shared with `signal-delivery` paper trades; point live execution at a dedicated file) |
 | `--risk-config` | Risk limits; default `config/risk.toml` |
 | `--config` | Execution config; default `config/execution.toml` |
 | `--cash` | Initial cash for a fresh risk database; default `1000` |
@@ -154,7 +155,9 @@ private config.
 3. `submit` re-fetches the ticker, re-marks risk, reconciles, and sends a **spot
    market** order whose client order id is `nx-{signal_id}`.
 4. It polls until terminal or `order_timeout_ms`. A timeout leaves the intent
-   `submitted`; `reconcile` resolves it later. Nothing is ever auto-resubmitted.
+   `submitted`; `reconcile` then matches it by client id, attaches the exchange
+   order id when it can, and otherwise reports it as missing for the owner to
+   resolve. Nothing is ever auto-resubmitted.
 5. Exchange fills are aggregated and reported to `RiskService.record_fill` as
    one increment per exchange update. A full fill consumes the approval; a
    canceled remainder calls `RiskService.expire_approval`.
@@ -177,8 +180,9 @@ entry price. Fees are reported as the change in cumulative fee.
 `reconcile` is mandatory before every submission and is safe to re-run:
 
 1. Fetch every open order and all balances.
-2. Match each local `submitted` intent to its exchange order by exchange id and
-   client id.
+2. Match each local `submitted` intent to its exchange order by exchange id, or
+   by client id when a submit outcome is unknown. A match attaches the exchange
+   order id and journals a `reconciled` event.
 3. Report:
    - `missing_orders`: a local submitted intent with no exchange order;
    - `unknown_orders`: an open exchange order with no local submitted intent;
@@ -220,5 +224,10 @@ The opt-in contract test reads a public ticker and cannot place an order.
   rebalancing.
 - The exchange's live symbol filters are not fetched yet; the config's
   `quantity_step`, `min_quantity` and `min_notional` are authoritative.
+- `reconcile` reports and attaches known orders, but does not apply fills or
+  terminalize intents by itself.
+- Fill reporting to `risk-engine` and the execution journal use separate SQLite
+  transactions. A crash between the two can re-report a fill on resume; a durable
+  fill idempotency key is still a design decision.
 - Stage 3 autonomy is out of scope.
 - Live trading is never risk-free. Nothing here is a profit guarantee.

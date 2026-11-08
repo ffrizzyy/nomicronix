@@ -27,7 +27,11 @@ from nomicronix.risk_engine.store import RiskStateStore
 
 def _add_storage(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--execution-db", default="data/execution.sqlite")
-    parser.add_argument("--risk-db", default="data/risk.sqlite")
+    parser.add_argument(
+        "--risk-db",
+        default="data/risk.sqlite",
+        help="risk database; shared with signal-delivery by default",
+    )
     parser.add_argument("--risk-config", default=None)
     parser.add_argument("--config", default=None, help="TOML execution config")
     parser.add_argument("--cash", default="1000", help="initial paper cash for a fresh risk DB")

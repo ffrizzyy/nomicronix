@@ -104,7 +104,7 @@ Arrow direction is the build order. The fake adapter mirrors the real one.
 | Key leak in an error or journal | High | Environment-only keys; redact URLs and bodies |
 | Unknown order status treated as filled | High | Fail closed; only terminal exchange states are accepted |
 | Accidental autonomy | High | Stage 3 is out of scope and rejected by config |
-| Exchange outage mid-order | Med | Timeout leaves `submitted`; reconcile resolves; never auto-resubmit |
+| Exchange outage mid-order | Med | Timeout leaves `submitted`; reconcile matches or flags it; never auto-resubmit |
 | Test suite touching the network | Med | Fake adapter; one opt-in read-only contract test |
 
 ## Verification Checkpoints
