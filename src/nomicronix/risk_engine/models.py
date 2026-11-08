@@ -53,6 +53,9 @@ class Instrument:
     def __post_init__(self) -> None:
         if not self.symbol.strip():
             raise ValueError("instrument symbol must not be empty")
+        for name in ("quantity_step", "min_quantity", "min_notional"):
+            if not getattr(self, name).is_finite():
+                raise ValueError(f"{name} must be finite")
         if self.quantity_step <= 0:
             raise ValueError("quantity_step must be positive")
         if self.min_quantity < 0:
@@ -158,6 +161,19 @@ class RiskLimits:
     allowed_symbols: frozenset[str] = frozenset({"BTC/USDT", "ETH/USDT"})
 
     def __post_init__(self) -> None:
+        for name in (
+            "risk_per_trade_pct",
+            "max_daily_loss_pct",
+            "max_drawdown_pct",
+            "max_position_notional_pct",
+            "max_total_exposure_pct",
+            "max_open_risk_pct",
+            "min_reward_risk",
+            "min_notional_usdt",
+        ):
+            value = getattr(self, name)
+            if not value.is_finite():
+                raise ValueError(f"{name} must be finite")
         for name in (
             "risk_per_trade_pct",
             "max_daily_loss_pct",

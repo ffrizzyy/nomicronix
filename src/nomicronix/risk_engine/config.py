@@ -17,7 +17,13 @@ class ConfigError(ValueError):
 
 
 def _decimal(section: dict[str, Any], key: str, default: Decimal) -> Decimal:
-    return Decimal(str(section.get(key, default)))
+    try:
+        value = Decimal(str(section.get(key, default)))
+    except ArithmeticError as exc:
+        raise ConfigError(f"{key} must be a decimal number") from exc
+    if not value.is_finite():
+        raise ConfigError(f"{key} must be finite")
+    return value
 
 
 def load_limits(path: str | Path | None = None) -> RiskLimits:

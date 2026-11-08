@@ -50,6 +50,8 @@ def test_instrument_rejects_invalid_rules() -> None:
         Instrument("BTC/USDT", Decimal("0"), Decimal("0"), Decimal("1"))
     with pytest.raises(ValueError):
         Instrument("BTC/USDT", Decimal("1"), Decimal("-1"), Decimal("1"))
+    with pytest.raises(ValueError, match="finite"):
+        Instrument("BTC/USDT", Decimal("nan"), Decimal("0"), Decimal("1"))
 
 
 def test_snapshot_drawdown_and_daily_loss() -> None:

@@ -84,3 +84,25 @@ allowed_symbols = []
     )
     with pytest.raises(ConfigError):
         load_limits(path)
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        '[risk]\nmin_reward_risk = "nan"\n',
+        '[risk]\nmin_notional_usdt = "inf"\n',
+        '[risk]\nrisk_per_trade_pct = "abc"\n',
+        '[risk]\nmax_signal_age_ms = "soon"\n',
+    ],
+)
+def test_non_finite_or_malformed_decimals_are_reported(tmp_path, body: str) -> None:
+    path = tmp_path / "risk.toml"
+    path.write_text(body, encoding="utf-8")
+    with pytest.raises(ConfigError):
+        load_limits(path)
+
+
+@pytest.mark.parametrize("value", ["nan", "inf", "-inf"])
+def test_direct_limits_reject_non_finite_decimals(value: str) -> None:
+    with pytest.raises(ValueError, match="finite"):
+        RiskLimits(min_reward_risk=Decimal(value))
