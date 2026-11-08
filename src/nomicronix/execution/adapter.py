@@ -25,7 +25,10 @@ from nomicronix.execution.models import (
 API_KEY_ENV = "NOMICRONIX_BINANCE_API_KEY"
 API_SECRET_ENV = "NOMICRONIX_BINANCE_API_SECRET"
 
-_REDACT = re.compile(r"(api[_-]?key|signature|secret|token)=([^&\s]+)", re.IGNORECASE)
+_REDACT = re.compile(
+    r"\b(api[_-]?key|api[_-]?secret|signature|secret|token)['\"]?\s*[=:]\s*['\"]?([^&,\s}\"']+)",
+    re.IGNORECASE,
+)
 
 
 def _redact(message: str) -> str:

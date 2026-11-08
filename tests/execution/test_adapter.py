@@ -9,6 +9,7 @@ import pytest
 
 from nomicronix.execution.adapter import (
     CcxtAdapter,
+    _redact,
     build_adapter,
     credentials_from_env,
     masked_key,
@@ -257,6 +258,22 @@ def test_exchange_errors_are_redacted() -> None:
     assert "SECRETKEY" not in message
     assert "SIGNED" not in message
     assert "***" in message
+
+
+@pytest.mark.parametrize(
+    "message,secret",
+    [
+        ("apiKey=SECRET", "SECRET"),
+        ("apiSecret=SECRET", "SECRET"),
+        ('{"apiKey": "SECRET"}', "SECRET"),
+        ("signature: SECRET", "SECRET"),
+        ("token=SECRET&x=1", "SECRET"),
+    ],
+)
+def test_credential_shapes_are_redacted(message: str, secret: str) -> None:
+    redacted = _redact(message)
+    assert secret not in redacted
+    assert "***" in redacted
 
 
 def test_open_orders_and_cancel() -> None:
