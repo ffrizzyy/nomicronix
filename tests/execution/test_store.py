@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
+from contextlib import contextmanager
 from decimal import Decimal
 
 import pytest
@@ -15,6 +16,16 @@ from nomicronix.execution.models import (
 )
 from nomicronix.execution.store import ExecutionStore
 from tests.execution.fakes import NOW_MS, make_intent, make_order
+
+
+@contextmanager
+def _sqlite(path):
+    conn = sqlite3.connect(str(path))
+    try:
+        yield conn
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def created(intent_id: str = intent_id_for("sig-1")) -> OrderEvent:
@@ -101,7 +112,7 @@ def test_unknown_persisted_state_is_a_store_error(tmp_path) -> None:
     store.create_intent(make_intent())
     store.close()
 
-    with sqlite3.connect(str(path)) as conn:
+    with _sqlite(path) as conn:
         conn.execute("UPDATE intents SET state = 'teleported'")
     reopened = ExecutionStore(path)
     try:
@@ -117,7 +128,7 @@ def test_unknown_event_type_is_a_store_error(tmp_path) -> None:
     store.create_intent(make_intent(), event=created())
     store.close()
 
-    with sqlite3.connect(str(path)) as conn:
+    with _sqlite(path) as conn:
         conn.execute("UPDATE events SET event_type = 'teleported'")
     reopened = ExecutionStore(path)
     try:
@@ -133,7 +144,7 @@ def test_corrupt_decimal_is_a_store_error(tmp_path) -> None:
     store.create_intent(make_intent())
     store.close()
 
-    with sqlite3.connect(str(path)) as conn:
+    with _sqlite(path) as conn:
         conn.execute("UPDATE intents SET quantity = 'not-a-number'")
     reopened = ExecutionStore(path)
     try:
@@ -253,7 +264,7 @@ def test_a_corrupt_order_is_a_store_error(tmp_path) -> None:
     store.put_order(make_order())
     store.close()
 
-    with sqlite3.connect(str(path)) as conn:
+    with _sqlite(path) as conn:
         conn.execute("UPDATE orders SET filled_quantity = 'not-a-number'")
     reopened = ExecutionStore(path)
     try:
@@ -269,7 +280,7 @@ def test_an_unknown_order_status_is_a_store_error(tmp_path) -> None:
     store.put_order(make_order())
     store.close()
 
-    with sqlite3.connect(str(path)) as conn:
+    with _sqlite(path) as conn:
         conn.execute("UPDATE orders SET status = 'teleported'")
     reopened = ExecutionStore(path)
     try:

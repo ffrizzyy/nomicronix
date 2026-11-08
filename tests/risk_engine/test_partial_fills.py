@@ -8,6 +8,7 @@ accumulate into one position. A CLOSE fill may likewise be partial.
 from __future__ import annotations
 
 import sqlite3
+from contextlib import contextmanager
 from decimal import Decimal
 
 import pytest
@@ -16,6 +17,16 @@ from nomicronix.risk_engine.models import Fill, FillAction, RiskLimits
 from nomicronix.risk_engine.service import RiskService
 from nomicronix.risk_engine.store import ApprovalError, RiskStateStore
 from tests.risk_engine.fakes import NOW_MS, make_instrument, make_proposal
+
+
+@contextmanager
+def _sqlite(path):
+    conn = sqlite3.connect(str(path))
+    try:
+        yield conn
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def make_service(path: str) -> tuple[RiskStateStore, RiskService]:
@@ -298,7 +309,7 @@ def test_expiring_an_unknown_approval_is_rejected(tmp_path) -> None:
 
 def test_an_existing_database_gains_the_filled_quantity_column(tmp_path) -> None:
     path = tmp_path / "old.sqlite"
-    with sqlite3.connect(str(path)) as conn:
+    with _sqlite(path) as conn:
         conn.execute(
             """
             CREATE TABLE approvals (
