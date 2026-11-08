@@ -84,6 +84,10 @@ def test_instrument_uses_the_configured_rules() -> None:
         '[execution]\nquantity_step = "0"\n',
         '[execution]\nmin_quantity = "-1"\n',
         '[execution]\nmin_notional = "-1"\n',
+        '[execution]\nquantity_step = "nan"\n',
+        '[execution]\nmin_quantity = "inf"\n',
+        '[execution]\nmin_notional = "-inf"\n',
+        '[execution]\nquantity_step = "abc"\n',
         '[execution]\ndry_run = "yes"\n',
         "[execution]\nmax_intent_age_ms = true\n",
         '[execution]\nmax_intent_age_ms = "5"\n',
@@ -101,3 +105,9 @@ def test_malformed_toml_is_rejected(tmp_path: Path) -> None:
     path = write(tmp_path / "execution.toml", "[execution\n")
     with pytest.raises(ConfigError, match="invalid TOML"):
         load_execution_config(path)
+
+
+@pytest.mark.parametrize("value", ["nan", "inf", "-inf"])
+def test_direct_construction_rejects_non_finite_decimals(value: str) -> None:
+    with pytest.raises(ConfigError, match="finite"):
+        ExecutionConfig(quantity_step=Decimal(value))

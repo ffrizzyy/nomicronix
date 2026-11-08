@@ -68,6 +68,9 @@ class ExecutionConfig:
                 raise ConfigError(f"{name} must be positive")
         if self.max_clock_skew_ms < 0:
             raise ConfigError("max_clock_skew_ms must not be negative")
+        for name in ("quantity_step", "min_quantity", "min_notional"):
+            if not getattr(self, name).is_finite():
+                raise ConfigError(f"{name} must be finite")
         if self.quantity_step <= 0:
             raise ConfigError("quantity_step must be positive")
         if self.min_quantity < 0:
@@ -107,9 +110,12 @@ def _int(section: dict[str, Any], key: str, default: int) -> int:
 
 def _decimal(section: dict[str, Any], key: str, default: Decimal) -> Decimal:
     try:
-        return Decimal(str(section.get(key, default)))
+        value = Decimal(str(section.get(key, default)))
     except ArithmeticError as exc:
         raise ConfigError(f"{key} must be a decimal number") from exc
+    if not value.is_finite():
+        raise ConfigError(f"{key} must be finite")
+    return value
 
 
 def _reject_unknown(section: dict[str, Any], allowed: frozenset[str], label: str) -> None:
