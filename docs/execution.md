@@ -23,8 +23,11 @@ keeps `dry_run = true`, so a fresh checkout cannot place an order.
 
 `signal-delivery readiness` is the promotion gate. It exits `0` only after at
 least 30 closed paper trades over 28 days with positive expectancy after assumed
-costs. It is a process gate: `execution submit` does not read the paper ledger, so
-verify readiness yourself before enabling live trading.
+costs. `execution submit` enforces the same criteria in-process by reading the
+delivery ledger (`--delivery-db`, default `data/delivery.sqlite`) before it
+touches the exchange; a failing report refuses the order with exit `2`. The gate
+is on by default (`require_readiness = true`) and is skipped only when the owner
+deliberately sets `require_readiness = false`.
 
 ## Safety gates
 
@@ -36,15 +39,23 @@ Every `submit` must pass all of these before the exchange is touched:
 4. `allow_live = true` and `stage = "approved"`.
 5. The intent is `awaiting_approval`, not stale and not expired.
 6. No open position already exists for the symbol.
-7. The current best ask has not moved beyond `max_slippage_bps` from the signal
+7. The signal-delivery readiness report is `ready` (unless
+   `require_readiness = false`). A missing checker fails closed.
+8. The current best ask has not moved beyond `max_slippage_bps` from the signal
    entry.
-8. `RiskService.status().trading_allowed` is true (kill switch clear, fresh mark,
+9. `RiskService.status().trading_allowed` is true (kill switch clear, fresh mark,
    daily loss and drawdown inside limits).
-9. `reconcile` is clean: no unknown orders, missing orders or unexplained
-   positions.
+10. `reconcile` is clean: no unknown orders, missing orders or unexplained
+    positions.
+
+An intent already `submitted` may always be resumed and polled, even if
+readiness later drops, so an in-flight order is never abandoned. Readiness only
+blocks a new order.
 
 `flatten` is the only command that works while the kill switch is engaged,
-because it can only reduce exposure.
+because it can only reduce exposure. It caps each sell at the actual exchange
+balance and skips positions that exist only in the paper book, reporting them as
+`skipped`. An incomplete flatten exits `3`.
 
 ## Credentials
 
@@ -72,11 +83,11 @@ uv run python -m nomicronix.execution shadow \
 
 # Inspect the journal
 uv run python -m nomicronix.execution status
-uv run python -m nomicronix.execution show --intent nx-sma-cross:BTC/USDT:1h:1735776000000
+uv run python -m nomicronix.execution show --intent nx-1b2a5ef73e8f6887c56b0feaa35bddd9
 
 # Stage 2: submit one intent (all four live gates are required)
 uv run python -m nomicronix.execution submit \
-    --intent nx-sma-cross:BTC/USDT:1h:1735776000000 \
+    --intent nx-1b2a5ef73e8f6887c56b0feaa35bddd9 \
     --confirm "PLACE ORDER" --live
 
 # Cancel one open order
@@ -94,6 +105,7 @@ uv run python -m nomicronix.execution flatten --confirm "FLATTEN NOW"
 | `--signals` | Strategy-engine result (`schema_version = 1`, `kind = "signals"`) |
 | `--execution-db` | Order journal; default `data/execution.sqlite` |
 | `--risk-db` | Risk database; default `data/risk.sqlite` (shared with `signal-delivery` paper trades; point live execution at a dedicated file) |
+| `--delivery-db` | Signal-delivery ledger used by the readiness gate; default `data/delivery.sqlite` |
 | `--risk-config` | Risk limits; default `config/risk.toml` |
 | `--config` | Execution config; default `config/execution.toml` |
 | `--cash` | Initial cash for a fresh risk database; default `1000` |
@@ -130,6 +142,7 @@ max_intent_age_ms = 300000
 order_timeout_ms = 60000
 poll_interval_ms = 1000
 max_clock_skew_ms = 2000
+require_readiness = true
 quantity_step = "0.00001"
 min_quantity = "0.00001"
 min_notional = "10"
@@ -152,15 +165,19 @@ private config.
    close. A rejected check is journaled and never becomes an order.
 2. For an approval it fetches the public ticker, applies the expiry, staleness
    and slippage guards, and writes the intent with the exact approved quantity.
-3. `submit` re-fetches the ticker, re-marks risk, reconciles, and sends a **spot
-   market** order whose client order id is `nx-{signal_id}`.
+3. `submit` first checks readiness, then re-fetches the ticker, re-marks risk,
+   reconciles, and sends a **spot market** order whose client order id is a
+   deterministic `nx-` plus a truncated SHA-256 digest of the signal id (at most
+   36 characters, the Binance limit).
 4. It polls until terminal or `order_timeout_ms`. A timeout leaves the intent
    `submitted`; `reconcile` then matches it by client id, attaches the exchange
    order id when it can, and otherwise reports it as missing for the owner to
    resolve. Nothing is ever auto-resubmitted.
 5. Exchange fills are aggregated and reported to `RiskService.record_fill` as
-   one increment per exchange update. A full fill consumes the approval; a
-   canceled remainder calls `RiskService.expire_approval`.
+   one increment per exchange update. Each increment carries a deterministic
+   fill key, so replaying the same exchange update after a crash is a no-op. A
+   full fill consumes the approval; a canceled remainder calls
+   `RiskService.expire_approval`.
 
 ## Partial fills
 
@@ -174,6 +191,11 @@ Execution stores the cumulative `filled_quantity` and
 `average_fill_price` on the intent. The incremental price is derived from the
 change in cumulative notional, so several pieces do not distort the position's
 entry price. Fees are reported as the change in cumulative fee.
+
+Fill keys are durable in the risk database (`fill_keys`), so a crash between the
+risk commit and the execution journal commit can be replayed safely: the second
+report finds the key and returns the already-committed state instead of opening
+the position twice. `flatten` uses the same mechanism for its close fills.
 
 ## Reconciliation
 
@@ -225,9 +247,10 @@ The opt-in contract test reads a public ticker and cannot place an order.
 - The exchange's live symbol filters are not fetched yet; the config's
   `quantity_step`, `min_quantity` and `min_notional` are authoritative.
 - `reconcile` reports and attaches known orders, but does not apply fills or
-  terminalize intents by itself.
+  terminalize intents by itself. An unknown non-open outcome stays manual and is
+  never auto-resubmitted.
 - Fill reporting to `risk-engine` and the execution journal use separate SQLite
-  transactions. A crash between the two can re-report a fill on resume; a durable
-  fill idempotency key is still a design decision.
+  transactions. The durable fill key makes a replay safe, but the two writes
+  remain separate commits.
 - Stage 3 autonomy is out of scope.
 - Live trading is never risk-free. Nothing here is a profit guarantee.

@@ -3,11 +3,11 @@
 Module id: `execution` (depends on: risk-engine, signal-delivery)
 
 **Status: implemented for stages 1 and 2.** `execution` was built after an
-explicit owner decision; live submission is still gated by
-`signal-delivery readiness` (a process gate that `submit` does not read itself),
-the four live switches and human confirmation. The committed config keeps
-`dry_run = true`, so a fresh checkout cannot place an order. Stage 3 remains out
-of scope.
+explicit owner decision; live submission is still gated by the same
+`signal-delivery readiness` criteria, which `submit` now evaluates from the
+delivery ledger, plus the four live switches and human confirmation. The
+committed config keeps `dry_run = true`, so a fresh checkout cannot place an
+order. Stage 3 remains out of scope.
 
 ## Objective
 
@@ -88,8 +88,10 @@ These are the reason the module exists. Each is enforced, not documented away.
 
 1. **Risk decides.** An intent can only be created from a `RiskDecision` with
    `approved = true`. Execution never sizes or re-derives a quantity.
-2. **One order per signal.** `intent_id = f"nx-{signal_id}"` is the exchange
-   client order id and the local primary key. A duplicate submit is a no-op, not
+2. **One order per signal.** `intent_id` is a deterministic `nx-` plus a
+   truncated SHA-256 digest of the signal id, which keeps the exchange client
+   order id inside Binance's 36-character limit. It is both the exchange client
+   order id and the local primary key. A duplicate submit is a no-op, not
    a second order.
 3. **Kill switch blocks submission.** Every submit reads `RiskService.status()`;
    a disallowed account cancels nothing automatically but refuses new orders.
@@ -111,6 +113,10 @@ These are the reason the module exists. Each is enforced, not documented away.
 10. **Paper first.** `dry_run = true` is the default and refuses to submit until
     the owner sets `dry_run = false`, sets `allow_live = true` with stage
     `approved`, passes `--live` and types `PLACE ORDER`. All are required.
+11. **Readiness is enforced.** A live submit also requires a passing readiness
+    report from the paper ledger. `require_readiness` defaults to `true`; a
+    missing checker fails closed. An already submitted order can still be
+    resumed and polled if readiness later drops.
 
 ## Order flow
 
@@ -130,8 +136,9 @@ These are the reason the module exists. Each is enforced, not documented away.
 1. Same steps as shadow, but the intent state is `awaiting_approval`.
 2. `submit --intent <id> --confirm "PLACE ORDER"` requires the exact phrase. Any
    other phrase is a typed error with exit `1`.
-3. Before the exchange call, re-check the risk status and re-fetch the ticker.
-   If the price moved beyond the slippage ceiling, reject and journal it.
+3. Before the exchange call, evaluate the readiness gate, re-check the risk
+   status and re-fetch the ticker. A failed readiness report or a price beyond
+   the slippage ceiling is journaled and the order is not sent.
 4. Submit a **market** order with the intent's quantity and client order id.
    Market orders are used because a resting limit order can miss the move that
    created the signal; the slippage ceiling, not the order type, is the control.
@@ -151,10 +158,13 @@ These are the reason the module exists. Each is enforced, not documented away.
   order, and it expires any remaining approval.
 - `flatten --confirm "FLATTEN NOW"` cancels every open order and market-sells
   every open position at the exchange's best bid after re-reading the risk
-  status. It is the panic button; it still reports fills through `record_fill`.
-  It never bypasses size limits because it only reduces exposure, and it works
-  while the kill switch is engaged for the same reason. Unknown exchange orders
-  are canceled too and journaled under a synthetic `nx-unknown-{client_id}` intent.
+  status. Each sell is capped at the actual exchange balance; a position that
+  exists only in the paper book is skipped and reported rather than sold. It is
+  the panic button; it still reports fills through `record_fill`. It never
+  bypasses size limits because it only reduces exposure, and it works while the
+  kill switch is engaged for the same reason. Unknown exchange orders are
+  canceled too and journaled under a synthetic `nx-unknown-{client_id}` intent.
+  An incomplete flatten (timeout, skip or partial sell) exits `3`.
 
 ## Partial fills and the risk contract
 
@@ -176,6 +186,12 @@ That change has landed in `risk-engine` v1.1 and is covered by
 in `fills.py`, stores the cumulative quantity and average, and reports only the
 increment to risk. A fill that regresses, overfills, or arrives for another
 intent fails closed before risk sees it.
+
+Each increment is reported with a deterministic fill key, and the risk database
+records it in `fill_keys`. Replaying the same exchange update after a crash
+between the risk commit and the execution journal commit returns the committed
+state instead of opening the position twice. The final piece consumes the
+approval exactly once, and a replayed full fill is a no-op.
 
 ## Exchange adapter
 
@@ -233,11 +249,11 @@ uv run python -m nomicronix.execution shadow --signals results/btc-signals.json
 
 # Inspect intents and the journal
 uv run python -m nomicronix.execution status
-uv run python -m nomicronix.execution show --intent nx-sma-cross:BTC/USDT:1h:1735776000000
+uv run python -m nomicronix.execution show --intent nx-1b2a5ef73e8f6887c56b0feaa35bddd9
 
 # Stage 2: submit one intent (requires dry_run=false, allow_live=true, stage=approved and --live)
 uv run python -m nomicronix.execution submit \
-    --intent nx-sma-cross:BTC/USDT:1h:1735776000000 \
+    --intent nx-1b2a5ef73e8f6887c56b0feaa35bddd9 \
     --confirm "PLACE ORDER" --live
 
 # Cancel, reconcile, panic
@@ -251,6 +267,7 @@ uv run python -m nomicronix.execution flatten --confirm "FLATTEN NOW"
 | `--signals` | Approved signal file (`schema_version = 1`, `kind = "signals"`) |
 | `--execution-db` | Order journal; default `data/execution.sqlite` |
 | `--risk-db` | Risk database; default `data/risk.sqlite` (shared with `signal-delivery`; use a dedicated file for live) |
+| `--delivery-db` | Signal-delivery ledger used by the readiness gate; default `data/delivery.sqlite` |
 | `--risk-config` | Risk limits; default `config/risk.toml` |
 | `--config` | Execution config; default `config/execution.toml` |
 | `--cash` | Initial cash for a fresh risk database; default `1000` |
@@ -287,6 +304,7 @@ max_intent_age_ms = 300000
 order_timeout_ms = 60000
 poll_interval_ms = 1000
 max_clock_skew_ms = 2000
+require_readiness = true
 quantity_step = "0.00001"
 min_quantity = "0.00001"
 min_notional = "10"
@@ -312,6 +330,10 @@ One SQLite database at `data/execution.sqlite` (WAL):
   price, fee and last update time.
 - `events`: append-only journal with autoincrement id, intent id, event type,
   timestamp and payload JSON.
+
+The risk database owns the durable `fill_keys` table used to make fill reporting
+idempotent across a crash. Execution does not write it directly; it passes the
+key to `RiskService.record_fill`.
 
 Execution writes risk state only through `RiskService`. It never writes
 `risk_state`, `positions`, `approvals` or `journal` tables directly. It reads
@@ -346,9 +368,9 @@ open positions through the read-only `RiskService.positions()` and
 ## Guarantees
 
 - **No order without approval.** Submission requires an approved risk decision,
-  the exact confirmation phrase, `dry_run = false`, `--live`, and a stage that
-  allows live orders.
-- **No duplicate order.** The signal id is the client order id.
+  a passing readiness report, the exact confirmation phrase, `dry_run = false`,
+  `--live`, and a stage that allows live orders.
+- **No duplicate order.** The signal id maps deterministically to the client order id.
 - **No silent state.** Every intent and transition is journaled before output.
 - **No unverified books.** Reconciliation must be clean before submitting.
 - **No withdrawal path.** The module has no withdrawal method and requires a
@@ -360,7 +382,8 @@ open positions through the read-only `RiskService.positions()` and
 - Binance only, spot only, long only, market orders only.
 - Stage 3 autonomy is out of scope; this spec stops at human-approved orders.
 - Partial fills are aggregated per exchange increment; execution stores the
-  cumulative quantity and average and never reports a piece twice.
+  cumulative quantity and average and uses a durable fill key so a replay never
+  reports a piece twice. The risk and execution writes remain separate commits.
 - The exchange's live symbol filters are not fetched yet; `quantity_step`,
   `min_quantity` and `min_notional` in the config are authoritative.
 - No portfolio margin, OCO brackets or exchange-side stops; protective stops stay
@@ -379,7 +402,7 @@ Built in `src/nomicronix/execution/`:
 | `store.py` | SQLite journal for intents, order snapshots and append-only events |
 | `adapter.py` | `ccxt` spot adapter, `FakeAdapter`, env credentials, spot/permission/skew checks |
 | `shadow.py` | Signal loading, risk re-check, expiry and slippage guards, intent creation |
-| `submit.py` | Four live gates, reconciliation, market submit, polling, no auto-resubmit |
+| `submit.py` | Live gates, readiness gate, reconciliation, market submit, polling, no auto-resubmit |
 | `fills.py` | Incremental fill aggregation and approval consumption/expiry |
 | `reconcile.py` | Order and balance comparison, mismatch journaling, exit `3` |
 | `flatten.py` | Cancel-all and close-all panic path, kill-switch safe |
@@ -394,7 +417,7 @@ public ticker without credentials. Module coverage is above the 90% floor.
 
 | Question | Decision |
 |---|---|
-| When may execution be built | Built after an explicit owner decision; `readiness` remains the promotion gate for real money |
+| When may execution be built | Built after an explicit owner decision; `readiness` is enforced by `submit` before real money moves |
 | First stage | Shadow intents with no private call |
 | Order type | Spot market order with a slippage ceiling |
 | Approval | Exact phrase `PLACE ORDER`, `--live`, `dry_run = false`, and `allow_live = true` with stage `approved` |

@@ -245,14 +245,15 @@ uv run python -m nomicronix.execution shadow --signals results/btc-signals.json
 
 # Inspect the order journal
 uv run python -m nomicronix.execution status
-uv run python -m nomicronix.execution show --intent nx-sma-cross:BTC/USDT:1h:1735776000000
+uv run python -m nomicronix.execution show --intent nx-1b2a5ef73e8f6887c56b0feaa35bddd9
 
 # Stage 2: submit one intent. Needs the exact phrase, --live,
-# dry_run = false and allow_live = true with stage = "approved".
+# dry_run = false, allow_live = true with stage = "approved", and a
+# passing readiness report from the paper ledger.
 export NOMICRONIX_BINANCE_API_KEY=...
 export NOMICRONIX_BINANCE_API_SECRET=...
 uv run python -m nomicronix.execution submit \
-    --intent nx-sma-cross:BTC/USDT:1h:1735776000000 \
+    --intent nx-1b2a5ef73e8f6887c56b0feaa35bddd9 \
     --confirm "PLACE ORDER" --live
 
 # Cancel one order, verify the books, or flatten everything
@@ -263,9 +264,11 @@ uv run python -m nomicronix.execution flatten --confirm "FLATTEN NOW"
 
 The committed [`config/execution.toml`](config/execution.toml) is safe by
 default: `dry_run = true`, stage `shadow`, and `allow_live = false`. Every submit
-re-checks risk, re-applies the slippage ceiling, and refuses while reconciliation
-is unclean. See [`docs/execution.md`](docs/execution.md) for the four live
-switches, the trade-only key checks and the panic path.
+checks readiness, re-checks risk, re-applies the slippage ceiling, and refuses
+while reconciliation is unclean. Flatten caps each sell at the real exchange
+balance and reports paper-only positions as skipped instead of inventing a sell.
+See [`docs/execution.md`](docs/execution.md) for the live switches, the readiness
+gate, the trade-only key checks and the panic path.
 
 ## Development
 
@@ -303,15 +306,18 @@ typing and a coverage floor. No CI job needs exchange credentials.
   wired yet.
 - `signal-delivery` paper fills are full and fee-free at the planned price, with
   stops checked before targets. It has no scheduler or retry daemon, and Telegram
-  is its only remote sink. Its `readiness` command is the process gate for
-  promoting `execution`: at least 30 closed trades over 28 days with positive
-  expectancy after assumed costs. `execution submit` does not read that ledger
-  itself, so the owner must run and honour it before enabling live trading.
+  is its only remote sink. Its `readiness` command is the promotion gate for
+  `execution`: at least 30 closed trades over 28 days with positive expectancy
+  after assumed costs. `execution submit` enforces the same criteria from the
+  delivery ledger (`--delivery-db`), so live trading cannot start on an
+  unproven paper record.
 - `execution` supports stages 1 and 2 only: shadow intents and one owner-approved
   spot market order at a time. It is Binance-through-ccxt only, long only, with
   no OCO brackets or exchange-side stops. Stage 3 autonomy is out of scope.
-  `signal-delivery readiness` still exits `2` on this checkout, so live trading
-  remains an owner decision, not a default.
+  Fills carry a durable idempotency key, so a crash replay cannot open a position
+  twice; the risk and execution writes are still two commits. `signal-delivery
+  readiness` still exits `2` on this checkout, so live trading remains an owner
+  decision, not a default.
 
 ## License
 

@@ -2,9 +2,11 @@
 
 Plan: `tasks/plan-execution.md` · Spec: `SPEC-execution.md`
 
-**Status: built.** Tasks 1-8 are complete. Task 0's operational checks remain
-open: the readiness gate still exits `2`, and the trade-only key/IP restriction
-and owner approval of live stages are not recorded here.
+**Status: built.** Tasks 1-8 are complete. The owner approved stages 1 and 2
+(not stage 3) on 2026-11-09. `submit` now enforces the readiness criteria itself
+from the delivery ledger, but Task 0's operational checks remain open: the paper
+record still fails readiness (exit `2`), and the trade-only key/IP restriction
+cannot be verified without the owner's exchange account.
 
 ## Phase 0: gate and prerequisites
 
@@ -14,10 +16,13 @@ and owner approval of live stages are not recorded here.
 v1.1 partial-fill change approved, and confirm the exchange key is trade-only.
 
 **Acceptance criteria:**
-- [ ] `readiness` exits `0` and its JSON is archived
+- [ ] `readiness` exits `0` and its JSON is archived (needs 30 closed paper
+  trades over 28 days; cannot be fabricated)
 - [x] The risk-engine v1.1 partial-fill contract is approved and implemented
-- [ ] Withdrawals are disabled and the key is IP-restricted
-- [ ] The owner approves stages 1 and 2, not stage 3
+- [ ] Withdrawals are disabled and the key is IP-restricted (owner/exchange-only)
+- [x] The owner approves stages 1 and 2, not stage 3 (2026-11-09)
+- [x] `submit` enforces readiness in-process via `require_readiness` and
+  `--delivery-db`, failing closed if no checker is available
 
 **Verification:** `uv run python -m nomicronix.signal_delivery readiness --json`
 
