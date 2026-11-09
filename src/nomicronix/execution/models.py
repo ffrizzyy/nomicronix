@@ -6,6 +6,7 @@ exchange library: only ``adapter.py`` may do that, lazily.
 
 from __future__ import annotations
 
+import hashlib
 import time
 from dataclasses import dataclass, field
 from decimal import Decimal
@@ -130,8 +131,15 @@ TERMINAL_STATES = frozenset(
 
 
 def intent_id_for(signal_id: str) -> str:
-    """The client order id is derived from the signal id, never invented."""
-    return f"nx-{signal_id}"
+    """A deterministic Binance-safe client order id derived from the signal id.
+
+    Binance accepts at most 36 characters for ``newClientOrderId``. Signal ids
+    contain a strategy, symbol, timeframe and timestamp, so embedding them
+    directly can exceed that limit. A truncated SHA-256 digest keeps the id
+    deterministic, unique in practice and valid for every supported symbol.
+    """
+    digest = hashlib.sha256(signal_id.encode("utf-8")).hexdigest()
+    return f"nx-{digest[:32]}"
 
 
 def _positive(name: str, value: Decimal) -> None:

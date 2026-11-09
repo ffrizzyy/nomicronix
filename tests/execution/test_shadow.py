@@ -3,7 +3,7 @@ from __future__ import annotations
 from decimal import Decimal
 
 from nomicronix.execution.config import ExecutionConfig
-from nomicronix.execution.models import EventType, IntentState
+from nomicronix.execution.models import EventType, IntentState, intent_id_for
 from tests.execution.fakes import NOW_MS
 from tests.execution.harness import build
 from tests.signal_delivery.fakes import make_candidate, write_signals
@@ -15,7 +15,7 @@ def test_an_approved_signal_becomes_a_shadow_intent() -> None:
         signal = make_candidate()
         intent = harness.service.shadow(signal)
 
-        assert intent.intent_id == f"nx-{signal.signal_id}"
+        assert intent.intent_id == intent_id_for(signal.signal_id)
         assert intent.signal_id == signal.signal_id
         assert intent.state is IntentState.SHADOW
         assert intent.quantity == Decimal("1")

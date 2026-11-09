@@ -108,6 +108,7 @@ class FillReporter:
                     filled_at_ms=now_ms,
                 ),
                 now_ms=now_ms,
+                fill_key=f"{intent.intent_id}:{filled}",
             )
             complete = filled == intent.quantity
             state = IntentState.FILLED if complete else IntentState.SUBMITTED

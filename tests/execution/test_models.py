@@ -59,8 +59,15 @@ def test_an_intent_requires_an_average_price_after_a_fill() -> None:
     assert filled.remaining_quantity == Decimal("0.5")
 
 
-def test_intent_id_is_always_derived() -> None:
-    assert intent_id_for("sig-1") == "nx-sig-1"
+def test_intent_id_is_a_valid_deterministic_client_order_id() -> None:
+    first = intent_id_for("sig-1")
+    assert first == intent_id_for("sig-1")
+    assert first.startswith("nx-")
+    assert len(first) <= 36
+    assert first != intent_id_for("sig-2")
+    assert set(first) <= set("abcdefghijklmnopqrstuvwxyz0123456789-")
+    long_signal = "sma-cross:BTC/USDT:1h:1735776000000"
+    assert len(intent_id_for(long_signal)) <= 36
 
 
 @pytest.mark.parametrize(

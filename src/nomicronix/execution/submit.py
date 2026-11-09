@@ -17,6 +17,7 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 from decimal import Decimal
+from typing import NoReturn
 
 from nomicronix.execution.adapter import ExchangeAdapter
 from nomicronix.execution.config import ExecutionConfig
@@ -38,8 +39,10 @@ from nomicronix.execution.models import (
 from nomicronix.execution.shadow import slippage_bps
 from nomicronix.execution.store import ExecutionStore
 from nomicronix.risk_engine.service import RiskService
+from nomicronix.signal_delivery.readiness import ReadinessReport
 
 CONFIRM_PHRASE = "PLACE ORDER"
+ReadinessChecker = Callable[[], ReadinessReport]
 
 
 @dataclass(frozen=True, slots=True)
@@ -60,6 +63,7 @@ class Submitter:
         clock: Callable[[], int],
         sleep: Callable[[float], None] = time.sleep,
         reconciler: Callable[[int], Reconciliation] | None = None,
+        readiness: ReadinessChecker | None = None,
     ) -> None:
         self._risk = risk
         self._store = store
@@ -68,6 +72,7 @@ class Submitter:
         self._clock = clock
         self._sleep = sleep
         self._reconciler = reconciler
+        self._readiness = readiness
         self._fills = FillReporter(risk, store)
 
     def _journal(
@@ -79,11 +84,11 @@ class Submitter:
     ) -> None:
         self._store.append_event(OrderEvent(intent.intent_id, event_type, now_ms, payload))
 
-    def _refuse(self, intent: OrderIntent, now_ms: int, reason: str) -> None:
+    def _refuse(self, intent: OrderIntent, now_ms: int, reason: str) -> NoReturn:
         self._journal(intent, EventType.REFUSED, now_ms, {"reason": reason})
         raise RiskRejected(f"submission refused: {reason}", code=reason)
 
-    def _reject(self, intent: OrderIntent, now_ms: int, reason: str) -> None:
+    def _reject(self, intent: OrderIntent, now_ms: int, reason: str) -> NoReturn:
         self._store.update_intent(
             intent.intent_id,
             state=IntentState.REJECTED,
@@ -95,6 +100,37 @@ class Submitter:
             ),
         )
         raise RiskRejected(f"intent rejected: {reason}", code=reason)
+
+    def _check_readiness(self, intent: OrderIntent, now_ms: int) -> None:
+        """Fail closed unless the paper record meets the promotion criteria.
+
+        Readiness is a global promotion gate, not an order-level rule, so it is
+        checked once a live order is otherwise ready to be sent. It is skipped
+        only when the owner deliberately sets ``require_readiness = false``.
+        """
+        if not self._config.require_readiness:
+            return
+        if self._readiness is None:
+            self._refuse(intent, now_ms, "readiness_unavailable")
+        report = self._readiness()
+        if report.ready:
+            return
+        failed = [item.key for item in report.criteria if not item.passed]
+        self._journal(
+            intent,
+            EventType.REFUSED,
+            now_ms,
+            {
+                "reason": "readiness",
+                "failed": failed,
+                "closed_trades": report.closed_trades,
+                "track_record_days": str(report.track_record_days),
+            },
+        )
+        raise RiskRejected(
+            "execution readiness gate failed: " + ", ".join(failed),
+            code="readiness",
+        )
 
     def submit(
         self,
@@ -149,6 +185,8 @@ class Submitter:
             self._reject(intent, now, "stale_intent")
         if self._risk.has_open_position(intent.symbol, now_ms=now):
             self._refuse(intent, now, "duplicate_position")
+
+        self._check_readiness(intent, now)
 
         adapter = self._adapter
         ticker = adapter.fetch_ticker(intent.symbol)

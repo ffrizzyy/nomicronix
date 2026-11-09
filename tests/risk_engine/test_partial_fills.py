@@ -115,6 +115,38 @@ def test_a_second_partial_accumulates_one_position_at_a_weighted_average(tmp_pat
         store.close()
 
 
+def test_a_replayed_fill_key_is_a_no_op(tmp_path) -> None:
+    store, service = make_service(str(tmp_path / "risk.sqlite"))
+    try:
+        approve(service)
+        first = service.record_fill("sig-1", open_fill(quantity="0.4", fee="0.1"), fill_key="k-4")
+        replay = service.record_fill("sig-1", open_fill(quantity="0.4", fee="0.1"), fill_key="k-4")
+
+        approval = store.load_approval("sig-1")
+        assert approval is not None
+        assert approval.filled_quantity == Decimal("0.4")
+        assert first.positions["BTC/USDT"].quantity == Decimal("0.4")
+        assert replay.positions["BTC/USDT"].quantity == Decimal("0.4")
+        assert replay.cash == first.cash
+    finally:
+        store.close()
+
+
+def test_a_replayed_full_fill_does_not_consume_twice(tmp_path) -> None:
+    store, service = make_service(str(tmp_path / "risk.sqlite"))
+    try:
+        approve(service)
+        service.record_fill("sig-1", open_fill(), fill_key="k-full")
+        replay = service.record_fill("sig-1", open_fill(), fill_key="k-full")
+
+        approval = store.load_approval("sig-1")
+        assert approval is not None
+        assert approval.consumed_at_ms is not None
+        assert replay.positions["BTC/USDT"].quantity == Decimal("1")
+    finally:
+        store.close()
+
+
 def test_the_final_piece_consumes_the_approval_exactly_once(tmp_path) -> None:
     store, service = make_service(str(tmp_path / "risk.sqlite"))
     try:

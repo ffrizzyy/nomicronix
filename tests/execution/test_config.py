@@ -26,6 +26,10 @@ def test_repository_config_loads() -> None:
     assert load_execution_config(Path("config/execution.toml")) == ExecutionConfig()
 
 
+def test_the_readiness_gate_is_on_by_default() -> None:
+    assert ExecutionConfig().require_readiness is True
+
+
 def test_overrides_load(tmp_path: Path) -> None:
     path = write(
         tmp_path / "execution.toml",
@@ -40,6 +44,7 @@ def test_overrides_load(tmp_path: Path) -> None:
         "order_timeout_ms = 30000\n"
         "poll_interval_ms = 500\n"
         "max_clock_skew_ms = 1000\n"
+        "require_readiness = false\n"
         'quantity_step = "0.001"\n'
         'min_quantity = "0.01"\n'
         'min_notional = "20"\n'
@@ -51,6 +56,7 @@ def test_overrides_load(tmp_path: Path) -> None:
     assert config.allow_live is True
     assert config.stage == "approved"
     assert config.max_slippage_bps == 25
+    assert config.require_readiness is False
     assert config.require_kill_switch_clear is False
     assert config.quantity_step == Decimal("0.001")
 

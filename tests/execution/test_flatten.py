@@ -9,6 +9,7 @@ from nomicronix.execution.models import (
     IntentError,
     IntentState,
     OrderStatus,
+    intent_id_for,
 )
 from tests.execution.fakes import NOW_MS, make_intent, make_order
 from tests.execution.harness import build, live_config
@@ -20,6 +21,7 @@ def filled_harness():
     signal = make_candidate()
     intent = harness.service.shadow(signal, now_ms=NOW_MS)
     harness.service.submit(intent.intent_id, "PLACE ORDER", live=True)
+    harness.adapter.balance_map = {"BTC": Decimal("1")}
     return harness, signal, intent
 
 
@@ -78,7 +80,7 @@ def test_flatten_sells_the_open_position_and_reports_the_close() -> None:
             signal.symbol,
             "sell",
             Decimal("1"),
-            f"nx-flatten-{signal.signal_id}",
+            intent_id_for(f"flatten:{signal.signal_id}"),
         )
         events = harness.store.events_for(intent.intent_id)
         assert str(events[-1].event_type) == "flattened"
@@ -100,7 +102,7 @@ def test_flatten_works_while_the_kill_switch_is_engaged() -> None:
 def test_a_partial_flatten_leaves_the_remainder_open() -> None:
     harness, signal, _ = filled_harness()
     try:
-        client_id = f"nx-flatten-{signal.signal_id}"
+        client_id = intent_id_for(f"flatten:{signal.signal_id}")
         harness.adapter.queue(
             client_id,
             make_order(
@@ -120,6 +122,40 @@ def test_a_partial_flatten_leaves_the_remainder_open() -> None:
         positions = harness.risk.positions()
         assert len(positions) == 1
         assert positions[0].quantity == Decimal("0.5")
+    finally:
+        harness.close()
+
+
+def test_a_paper_position_without_exchange_balance_is_skipped() -> None:
+    harness, signal, _ = filled_harness()
+    try:
+        harness.adapter.balance_map = {}
+        before = len(harness.adapter.create_calls)
+        flattened = harness.service.flatten("FLATTEN NOW")
+
+        assert flattened.closed == ()
+        assert flattened.skipped == (signal.signal_id,)
+        assert len(harness.adapter.create_calls) == before
+        assert len(harness.risk.positions()) == 1
+        events = harness.store.events_for(intent_id_for(signal.signal_id))
+        assert events[-1].payload["reason"] == "no_exchange_balance"
+    finally:
+        harness.close()
+
+
+def test_a_flatten_sell_is_capped_to_the_exchange_balance() -> None:
+    harness, signal, _ = filled_harness()
+    try:
+        harness.adapter.balance_map = {"BTC": Decimal("0.4")}
+        flattened = harness.service.flatten("FLATTEN NOW")
+
+        assert len(flattened.closed) == 1
+        assert flattened.closed[0].filled_quantity == Decimal("0.4")
+        assert flattened.closed[0].requested_quantity == Decimal("1")
+        assert harness.adapter.create_calls[-1][2] == Decimal("0.4")
+        positions = harness.risk.positions()
+        assert len(positions) == 1
+        assert positions[0].quantity == Decimal("0.6")
     finally:
         harness.close()
 
@@ -158,7 +194,7 @@ def test_flatten_journals_an_unknown_exchange_order() -> None:
 def test_a_flatten_sell_that_never_terminal_finishes_reports_it() -> None:
     harness, signal, _ = filled_harness()
     try:
-        client_id = f"nx-flatten-{signal.signal_id}"
+        client_id = intent_id_for(f"flatten:{signal.signal_id}")
         harness.adapter.queue(
             client_id,
             make_order(client_order_id=client_id, side="sell", status=OrderStatus.OPEN),
@@ -174,7 +210,7 @@ def test_a_flatten_sell_that_never_terminal_finishes_reports_it() -> None:
 def test_a_flatten_sell_cannot_fill_more_than_the_position() -> None:
     harness, signal, _ = filled_harness()
     try:
-        client_id = f"nx-flatten-{signal.signal_id}"
+        client_id = intent_id_for(f"flatten:{signal.signal_id}")
         harness.adapter.queue(
             client_id,
             make_order(

@@ -30,7 +30,7 @@ from nomicronix.execution.shadow import (
     slippage_bps,
 )
 from nomicronix.execution.store import ExecutionStore
-from nomicronix.execution.submit import SubmissionResult, Submitter
+from nomicronix.execution.submit import ReadinessChecker, SubmissionResult, Submitter
 from nomicronix.risk_engine.models import Side, TradeProposal
 from nomicronix.risk_engine.service import RiskService
 from nomicronix.signal_delivery.signals import load_signals
@@ -49,6 +49,7 @@ class ExecutionService:
         *,
         clock: Callable[[], int] = utc_now_ms,
         sleep: Callable[[float], None] = time.sleep,
+        readiness: ReadinessChecker | None = None,
     ) -> None:
         self._risk = risk
         self._store = store
@@ -56,6 +57,7 @@ class ExecutionService:
         self._config = config
         self._clock = clock
         self._sleep = sleep
+        self._readiness = readiness
 
     @property
     def config(self) -> ExecutionConfig:
@@ -170,6 +172,7 @@ class ExecutionService:
             clock=self._clock,
             sleep=self._sleep,
             reconciler=self.reconcile,
+            readiness=self._readiness,
         )
         return submitter.submit(intent_id, confirmation, live=live)
 

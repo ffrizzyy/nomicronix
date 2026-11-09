@@ -28,6 +28,7 @@ max_intent_age_ms = 300000
 order_timeout_ms = 100
 poll_interval_ms = 1
 max_clock_skew_ms = 2000
+require_readiness = false
 quantity_step = "0.00001"
 min_quantity = "0.00001"
 min_notional = "10"
@@ -205,6 +206,38 @@ def test_submit_fills_and_status_reflects_it(
     assert cli.main(["status", *storage(tmp_path), "--json"]) == 0
     status = json.loads(capsys.readouterr().out)
     assert status["by_state"]["filled"] == 1
+
+
+def test_submit_is_refused_when_the_paper_record_is_not_ready(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys
+) -> None:
+    config, intent_id = shadow(tmp_path, monkeypatch)
+    config.write_text(
+        config.read_text(encoding="utf-8").replace(
+            "require_readiness = false", "require_readiness = true"
+        ),
+        encoding="utf-8",
+    )
+    capsys.readouterr()
+
+    code = cli.main(
+        [
+            "submit",
+            "--intent",
+            intent_id,
+            "--confirm",
+            "PLACE ORDER",
+            "--live",
+            "--delivery-db",
+            str(tmp_path / "delivery.sqlite"),
+            *storage(tmp_path),
+            "--config",
+            str(config),
+        ]
+    )
+
+    assert code == 2
+    assert "readiness gate failed" in capsys.readouterr().err
 
 
 def test_missing_credentials_exit_one(

@@ -4,6 +4,7 @@ from decimal import Decimal
 
 import pytest
 
+from nomicronix.execution.fills import FillReporter
 from nomicronix.execution.models import ExchangeError, IntentState, OrderStatus
 from nomicronix.risk_engine.models import Fill, FillAction
 from nomicronix.risk_engine.store import ApprovalError
@@ -71,6 +72,40 @@ def test_partial_pieces_are_aggregated_and_reported_once() -> None:
         assert positions[0].entry_fee == Decimal("0.1")
         events = [str(event.event_type) for event in harness.store.events_for(intent.intent_id)]
         assert events[-3:] == ["submitted", "partially_filled", "filled"]
+    finally:
+        harness.close()
+
+
+def test_a_crash_between_risk_and_journal_replays_safely() -> None:
+    harness, signal, intent = awaiting()
+    try:
+        order = make_order(
+            client_order_id=intent.intent_id,
+            status=OrderStatus.CLOSED,
+            quantity="1",
+            filled_quantity="1",
+            average_price="100",
+            raw_status="FILLED",
+        )
+        reporter = FillReporter(harness.risk, harness.store)
+        original = harness.store.update_intent
+
+        def fail_update(*args: object, **kwargs: object) -> None:
+            raise RuntimeError("simulated crash after the risk commit")
+
+        harness.store.update_intent = fail_update  # type: ignore[method-assign]
+        with pytest.raises(RuntimeError, match="simulated crash"):
+            reporter.apply(intent, order, now_ms=NOW_MS)
+        harness.store.update_intent = original  # type: ignore[method-assign]
+
+        # Risk committed the fill; the execution journal did not.
+        positions = harness.risk.positions()
+        assert len(positions) == 1
+        assert positions[0].quantity == Decimal("1")
+
+        replayed = reporter.apply(intent, order, now_ms=NOW_MS)
+        assert replayed.state is IntentState.FILLED
+        assert harness.risk.positions()[0].quantity == Decimal("1")
     finally:
         harness.close()
 

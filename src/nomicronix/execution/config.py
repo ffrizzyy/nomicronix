@@ -25,6 +25,7 @@ _EXECUTION_KEYS = frozenset(
         "order_timeout_ms",
         "poll_interval_ms",
         "max_clock_skew_ms",
+        "require_readiness",
         "quantity_step",
         "min_quantity",
         "min_notional",
@@ -47,6 +48,7 @@ class ExecutionConfig:
     order_timeout_ms: int = 60_000
     poll_interval_ms: int = 1_000
     max_clock_skew_ms: int = 2_000
+    require_readiness: bool = True
     require_kill_switch_clear: bool = True
     quantity_step: Decimal = Decimal("0.00001")
     min_quantity: Decimal = Decimal("0.00001")
@@ -163,6 +165,7 @@ def load_execution_config(path: str | Path | None = None) -> ExecutionConfig:
             order_timeout_ms=_int(section, "order_timeout_ms", default.order_timeout_ms),
             poll_interval_ms=_int(section, "poll_interval_ms", default.poll_interval_ms),
             max_clock_skew_ms=_int(section, "max_clock_skew_ms", default.max_clock_skew_ms),
+            require_readiness=_bool(section, "require_readiness", default.require_readiness),
             require_kill_switch_clear=_bool(
                 risk, "require_kill_switch_clear", default.require_kill_switch_clear
             ),

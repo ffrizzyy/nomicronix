@@ -111,6 +111,8 @@ class RiskService:
         signal_id: str,
         fill: Fill,
         now_ms: int | None = None,
+        *,
+        fill_key: str | None = None,
     ) -> PortfolioState:
         now = self._now(now_ms)
         if fill.quantity <= 0:
@@ -119,6 +121,11 @@ class RiskService:
             raise ApprovalError("fill price must be positive")
         if fill.fee < 0:
             raise ApprovalError("fill fee must not be negative")
+        if fill_key is not None and self._store.has_fill_key(fill_key):
+            # The same exchange increment was already committed. Returning the
+            # current state makes a crash between the risk and execution writes
+            # safe to replay.
+            return self._load(now)
 
         state = self._load(now)
         approval: Approval | None = None
@@ -143,7 +150,11 @@ class RiskService:
             )
         else:
             state.apply_close(signal_id, fill)
-        self._store.persist_fill(state, signal_id, fill, now, approval=approval)
+        persisted = self._store.persist_fill(
+            state, signal_id, fill, now, approval=approval, fill_key=fill_key
+        )
+        if not persisted:
+            return self._load(now)
         return state
 
     def expire_approval(self, signal_id: str, now_ms: int | None = None) -> None:

@@ -70,6 +70,12 @@ CREATE TABLE IF NOT EXISTS decisions (
     decision_json  TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS fill_keys (
+    fill_key       TEXT PRIMARY KEY,
+    signal_id      TEXT NOT NULL,
+    recorded_at_ms INTEGER NOT NULL
+);
+
 CREATE INDEX IF NOT EXISTS decisions_signal_idx ON decisions (signal_id);
 """
 
@@ -313,8 +319,17 @@ class RiskStateStore:
         now_ms: int,
         *,
         approval: Approval | None = None,
-    ) -> None:
+        fill_key: str | None = None,
+    ) -> bool:
         with self.transaction() as conn:
+            if fill_key is not None:
+                cursor = conn.execute(
+                    "INSERT OR IGNORE INTO fill_keys (fill_key, signal_id, recorded_at_ms)"
+                    " VALUES (?, ?, ?)",
+                    (fill_key, signal_id, now_ms),
+                )
+                if cursor.rowcount != 1:
+                    return False
             if fill.action is FillAction.OPEN:
                 if approval is None:
                     raise ApprovalError("an OPEN fill requires an approval")
@@ -335,6 +350,13 @@ class RiskStateStore:
                         f"approval {signal_id} is missing, already consumed or changed"
                     )
             self._save_state(conn, state, now_ms)
+            return True
+
+    def has_fill_key(self, fill_key: str) -> bool:
+        row = self._conn.execute(
+            "SELECT 1 FROM fill_keys WHERE fill_key = ?", (fill_key,)
+        ).fetchone()
+        return row is not None
 
     def decision_count(self) -> int:
         row = self._conn.execute("SELECT COUNT(*) AS n FROM decisions").fetchone()

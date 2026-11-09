@@ -6,7 +6,7 @@ import argparse
 import json
 import sqlite3
 import sys
-from collections.abc import Iterator, Sequence
+from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
 from decimal import Decimal
 
@@ -23,6 +23,12 @@ from nomicronix.risk_engine.config import ConfigError as RiskConfigError
 from nomicronix.risk_engine.config import load_limits
 from nomicronix.risk_engine.service import RiskService
 from nomicronix.risk_engine.store import RiskStateStore
+from nomicronix.signal_delivery.readiness import (
+    PromotionCriteria,
+    ReadinessReport,
+    evaluate_readiness,
+)
+from nomicronix.signal_delivery.store import DeliveryStore
 
 
 def _add_storage(parser: argparse.ArgumentParser) -> None:
@@ -31,6 +37,11 @@ def _add_storage(parser: argparse.ArgumentParser) -> None:
         "--risk-db",
         default="data/risk.sqlite",
         help="risk database; shared with signal-delivery by default",
+    )
+    parser.add_argument(
+        "--delivery-db",
+        default="data/delivery.sqlite",
+        help="signal-delivery database used by the readiness gate",
     )
     parser.add_argument("--risk-config", default=None)
     parser.add_argument("--config", default=None, help="TOML execution config")
@@ -78,6 +89,19 @@ def _build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _readiness_checker(args: argparse.Namespace) -> Callable[[], ReadinessReport]:
+    """Read the paper record lazily, only if a live submit reaches the gate."""
+
+    def check() -> ReadinessReport:
+        delivery = DeliveryStore(args.delivery_db)
+        try:
+            return evaluate_readiness(delivery, PromotionCriteria())
+        finally:
+            delivery.close()
+
+    return check
+
+
 @contextmanager
 def _stack(args: argparse.Namespace, *, private: bool) -> Iterator[ExecutionService]:
     config = load_execution_config(args.config)
@@ -96,7 +120,13 @@ def _stack(args: argparse.Namespace, *, private: bool) -> Iterator[ExecutionServ
             load_limits(args.risk_config),
             initial_cash=Decimal(args.cash),
         )
-        yield ExecutionService(risk, store, adapter, config)
+        yield ExecutionService(
+            risk,
+            store,
+            adapter,
+            config,
+            readiness=_readiness_checker(args),
+        )
     finally:
         store.close()
         risk_store.close()
@@ -236,6 +266,7 @@ def _run_flatten(args: argparse.Namespace) -> int:
             for closed in result.closed
         ],
         "timed_out": list(result.timed_out),
+        "skipped": list(result.skipped),
     }
     if args.json:
         print(json.dumps(payload, sort_keys=True, indent=2))
@@ -250,8 +281,12 @@ def _run_flatten(args: argparse.Namespace) -> int:
             )
         for signal_id in result.timed_out:
             print(f"still open: {signal_id}")
-    incomplete = bool(result.timed_out) or any(
-        closed.filled_quantity < closed.requested_quantity for closed in result.closed
+        for signal_id in result.skipped:
+            print(f"skipped: {signal_id} has no exchange balance")
+    incomplete = (
+        bool(result.timed_out)
+        or bool(result.skipped)
+        or any(closed.filled_quantity < closed.requested_quantity for closed in result.closed)
     )
     return 3 if incomplete else 0
 

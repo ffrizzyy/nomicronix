@@ -21,6 +21,7 @@ from nomicronix.execution.models import (
     ExchangeOrder,
     IntentError,
     OrderEvent,
+    intent_id_for,
 )
 from nomicronix.execution.store import ExecutionStore
 from nomicronix.risk_engine.models import Fill, FillAction
@@ -44,6 +45,7 @@ class FlattenResult:
     canceled: tuple[str, ...]
     closed: tuple[ClosedPosition, ...]
     timed_out: tuple[str, ...]
+    skipped: tuple[str, ...] = ()
 
 
 def _poll(
@@ -84,6 +86,7 @@ def flatten(
     reporter = FillReporter(risk, store)
     canceled: list[str] = []
     timed_out: list[str] = []
+    skipped: list[str] = []
 
     for order in adapter.open_orders():
         canceled_order = adapter.cancel_order(order.exchange_order_id, order.symbol)
@@ -106,11 +109,29 @@ def flatten(
             )
 
     closed: list[ClosedPosition] = []
+    balances = adapter.balances()
     for position in risk.positions(now_ms=now):
-        client_order_id = f"nx-flatten-{position.signal_id}"
-        order = adapter.create_market_order(
-            position.symbol, "sell", position.quantity, client_order_id
-        )
+        base = position.symbol.split("/")[0]
+        available = balances.get(base, Decimal(0))
+        quantity = min(position.quantity, available)
+        if quantity <= 0:
+            skipped.append(position.signal_id)
+            store.append_event(
+                OrderEvent(
+                    intent_id_for(position.signal_id),
+                    EventType.FLATTENED,
+                    now,
+                    {
+                        "action": "skip",
+                        "reason": "no_exchange_balance",
+                        "risk_quantity": str(position.quantity),
+                        "exchange_quantity": str(available),
+                    },
+                )
+            )
+            continue
+        client_order_id = intent_id_for(f"flatten:{position.signal_id}")
+        order = adapter.create_market_order(position.symbol, "sell", quantity, client_order_id)
         order, is_open = _poll(adapter, order, config, clock=clock, sleep=sleep)
         if is_open:
             timed_out.append(position.signal_id)
@@ -137,6 +158,7 @@ def flatten(
                     filled_at_ms=now,
                 ),
                 now_ms=now,
+                fill_key=f"flatten:{client_order_id}:{filled}",
             )
         closed.append(
             ClosedPosition(
@@ -150,7 +172,7 @@ def flatten(
         )
         store.append_event(
             OrderEvent(
-                f"nx-{position.signal_id}",
+                intent_id_for(position.signal_id),
                 EventType.FLATTENED,
                 now,
                 {
@@ -168,4 +190,9 @@ def flatten(
             )
         )
 
-    return FlattenResult(canceled=tuple(canceled), closed=tuple(closed), timed_out=tuple(timed_out))
+    return FlattenResult(
+        canceled=tuple(canceled),
+        closed=tuple(closed),
+        timed_out=tuple(timed_out),
+        skipped=tuple(skipped),
+    )
