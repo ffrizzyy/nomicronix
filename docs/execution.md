@@ -94,7 +94,9 @@ When the exchange exposes permissions, startup refuses a key that can withdraw.
 When it does not, the CLI still prints a trade-only reminder on every private
 command. Only the last four characters of the key are shown.
 
-Public commands (`shadow`, `status`, `show`) need no credentials.
+Public commands (`shadow`, `status`, `show`) need no credentials. `preflight`
+also runs without them, reporting the missing key as a blocking check instead of
+exiting early, so one run shows every blocker.
 
 ## Commands
 
