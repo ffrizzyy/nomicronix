@@ -259,6 +259,7 @@ uv run python -m nomicronix.execution submit \
 # Cancel, reconcile, panic
 uv run python -m nomicronix.execution cancel --intent nx-...
 uv run python -m nomicronix.execution reconcile
+uv run python -m nomicronix.execution preflight
 uv run python -m nomicronix.execution flatten --confirm "FLATTEN NOW"
 ```
 
@@ -274,7 +275,7 @@ uv run python -m nomicronix.execution flatten --confirm "FLATTEN NOW"
 | `--intent` | Intent id for `show`, `submit`, `cancel` |
 | `--confirm` | Exact confirmation phrase |
 | `--live` | Required, together with `dry_run = false`, to submit |
-| `--json` | Machine-readable output for `status`, `show`, `submit`, `cancel`, `reconcile` and `flatten` |
+| `--json` | Machine-readable output for `status`, `show`, `submit`, `cancel`, `reconcile`, `preflight` and `flatten` |
 
 Exit codes:
 
@@ -282,7 +283,7 @@ Exit codes:
 |---|---|
 | `0` | Command completed, including zero intents |
 | `1` | Invalid input, config, credentials, intent state or confirmation phrase |
-| `2` | A risk check rejected the signal or order submission is not allowed |
+| `2` | A risk check rejected the signal, submission is not allowed, or `preflight` found a blocking check |
 | `3` | Exchange or reconciliation error; books are not proven consistent |
 | `4` | Shadow or human-approval stage only: live submission is disabled |
 

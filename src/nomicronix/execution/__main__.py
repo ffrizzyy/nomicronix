@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sqlite3
 import sys
 from collections.abc import Callable, Iterator, Sequence
@@ -11,12 +12,16 @@ from contextlib import contextmanager
 from decimal import Decimal
 
 from nomicronix.execution.adapter import (
+    API_KEY_ENV,
+    API_SECRET_ENV,
     build_adapter,
     credentials_from_env,
+    make_adapter,
     masked_key,
 )
 from nomicronix.execution.config import load_execution_config
 from nomicronix.execution.models import ExecutionError, OrderIntent
+from nomicronix.execution.preflight import evaluate_preflight
 from nomicronix.execution.service import ExecutionService
 from nomicronix.execution.store import ExecutionStore
 from nomicronix.risk_engine.config import ConfigError as RiskConfigError
@@ -86,6 +91,10 @@ def _build_parser() -> argparse.ArgumentParser:
     panic.add_argument("--confirm", required=True)
     panic.add_argument("--json", action="store_true", help="machine-readable output")
 
+    preflight = commands.add_parser("preflight", help="read-only live-readiness checks")
+    _add_storage(preflight)
+    preflight.add_argument("--json", action="store_true", help="machine-readable output")
+
     return parser
 
 
@@ -95,7 +104,11 @@ def _readiness_checker(args: argparse.Namespace) -> Callable[[], ReadinessReport
     def check() -> ReadinessReport:
         delivery = DeliveryStore(args.delivery_db)
         try:
-            return evaluate_readiness(delivery, PromotionCriteria())
+            return evaluate_readiness(
+                delivery,
+                PromotionCriteria(),
+                initial_cash=Decimal(args.cash),
+            )
         finally:
             delivery.close()
 
@@ -291,6 +304,26 @@ def _run_flatten(args: argparse.Namespace) -> int:
     return 3 if incomplete else 0
 
 
+def _run_preflight(args: argparse.Namespace) -> int:
+    config = load_execution_config(args.config)
+    api_key = os.environ.get(API_KEY_ENV, "").strip()
+    secret = os.environ.get(API_SECRET_ENV, "").strip()
+    key_present = bool(api_key and secret)
+    adapter = make_adapter(config, (api_key, secret) if key_present else None)
+    report = evaluate_preflight(
+        config,
+        key_present=key_present,
+        key_hint=masked_key(api_key) if key_present else None,
+        adapter=adapter,
+        readiness=_readiness_checker(args)(),
+    )
+    if args.json:
+        print(json.dumps(report.payload(), sort_keys=True, indent=2))
+    else:
+        print(report.render())
+    return 0 if report.ready else 2
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
     try:
@@ -306,6 +339,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             return _run_cancel(args)
         if args.command == "reconcile":
             return _run_reconcile(args)
+        if args.command == "preflight":
+            return _run_preflight(args)
         return _run_flatten(args)
     except ExecutionError as exc:
         print(f"execution error: {exc}", file=sys.stderr)

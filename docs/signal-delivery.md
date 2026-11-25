@@ -156,6 +156,39 @@ has been exercised and did not lose money after conservative costs; it does not
 mean live trading will work. Raising a threshold is always allowed; lowering one
 is a deliberate owner decision that should be written down.
 
+### Running the cycle
+
+The 28-day clock advances on wall time, so the paper loop needs a schedule.
+[`../scripts/paper_cycle.py`](../scripts/paper_cycle.py) runs one complete cycle
+with the documented CLIs: backfill, mark open trades at the latest closed candle,
+scan and deliver each symbol, then print readiness. Marking comes before
+delivery, so a trade opened this cycle is not stopped on the same candle that
+created it.
+
+```bash
+# Print every command without running it
+uv run python scripts/paper_cycle.py --dry-run
+
+# One real cycle (defaults: BTC/USDT and ETH/USDT on 1h, 120-day lookback)
+uv run python scripts/paper_cycle.py
+```
+
+Cron on a UTC host:
+
+```cron
+5 * * * * cd /srv/nomicronix && uv run python scripts/paper_cycle.py >> data/paper-cycle.log 2>&1
+```
+
+Windows Task Scheduler:
+
+```powershell
+schtasks /Create /SC HOURLY /TN "Nomicronix paper cycle" /TR "cmd /c cd /d D:\path\to\nomicronix && uv run python scripts\paper_cycle.py" /ST 00:05
+```
+
+A readiness exit `2` is reported but does not fail the cycle, because the gate is
+expected to stay red while evidence accumulates. A failure in any earlier step
+stops the cycle with that exit code, so a broken feed, config or sink is loud.
+
 ## Sinks
 
 ```python
@@ -273,7 +306,9 @@ without a `[promotion]` table uses the readiness defaults above.
 - Paper fills are full, fee-free and at the planned price. Real execution adds
   fees, slippage and partial fills.
 - One position per symbol, inherited from `risk-engine`; no pyramiding.
-- No scheduler, retry daemon or rate-limit handling. `tick` is owner-invoked.
+- No built-in scheduler, retry daemon or rate-limit handling. `tick` is
+  owner-invoked; [`../scripts/paper_cycle.py`](../scripts/paper_cycle.py) runs one
+  cycle and the scheduler stays external.
 - Telegram is the only remote sink. Email and webhooks are future work.
 - The promotion gate is a minimum bar, not proof of edge. Passing it only means
   the paper process was exercised without losing money after assumed costs.

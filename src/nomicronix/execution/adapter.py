@@ -300,23 +300,34 @@ def masked_key(api_key: str) -> str:
     return f"***{api_key[-4:]}" if len(api_key) >= 4 else "***"
 
 
-def build_adapter(config: ExecutionConfig, *, require_private: bool) -> CcxtAdapter:
-    """Build the real adapter after the spot, clock and key-permission checks."""
+def make_adapter(
+    config: ExecutionConfig, credentials: tuple[str, str] | None = None
+) -> CcxtAdapter:
+    """Construct the ccxt adapter without running the startup safety checks.
+
+    Only `preflight` uses this, so it can report one failed check instead of
+    aborting on the first. Every order path goes through `build_adapter`.
+    """
     import ccxt
 
     options: dict[str, Any] = {
         "enableRateLimit": True,
         "options": {"defaultType": config.market_type},
     }
-    if require_private:
-        api_key, secret = credentials_from_env()
-        options["apiKey"] = api_key
-        options["apiSecret"] = secret
+    if credentials is not None:
+        options["apiKey"] = credentials[0]
+        options["apiSecret"] = credentials[1]
 
     exchange_class = getattr(ccxt, config.exchange, None)
     if exchange_class is None:
         raise ExchangeError(f"ccxt has no exchange {config.exchange!r}", code="unknown_exchange")
-    adapter = CcxtAdapter(config.exchange, client=exchange_class(options))
+    return CcxtAdapter(config.exchange, client=exchange_class(options))
+
+
+def build_adapter(config: ExecutionConfig, *, require_private: bool) -> CcxtAdapter:
+    """Build the real adapter after the spot, clock and key-permission checks."""
+    credentials = credentials_from_env() if require_private else None
+    adapter = make_adapter(config, credentials)
 
     if adapter.market_type() != "spot":
         raise ExchangeError("exchange market type is not spot", code="non_spot_market")

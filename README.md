@@ -116,6 +116,7 @@ examples/make_proposal.py     writes a fresh, valid proposal for a manual check
 examples/proposal.json        static proposal schema sample (timestamp is stale)
 examples/strategies.py        SmaCross, BuyAndHold and AlwaysFlat examples
 examples/strategy_models.py   built-in and custom signal proposers
+scripts/paper_cycle.py        one schedulable backfill → mark → scan → deliver → readiness cycle
 src/nomicronix/
   market_data/                ccxt adapter, SQLite store, backfill, live updater
   risk_engine/                pure rules, sizing, state, SQLite journal, CLI
@@ -229,13 +230,18 @@ uv run python -m nomicronix.signal_delivery report
 
 # Check whether the paper record is strong enough to build execution
 uv run python -m nomicronix.signal_delivery readiness
+
+# Run one full paper cycle and print readiness (schedulable; --dry-run prints only)
+uv run python scripts/paper_cycle.py
 ```
 
 Rejected signals are recorded in the outbox but never sent as trade alerts, and
 re-running the same file never duplicates a delivery or a position. Paper fills
 are full and fee-free. See
 [`docs/signal-delivery.md`](docs/signal-delivery.md) for the outbox, replay and
-paper-trade rules.
+paper-trade rules. The promotion gate needs 28 days of wall time, so
+`scripts/paper_cycle.py` is meant to run from cron or Task Scheduler; it cannot
+shortcut the clock.
 
 ### execution
 
@@ -259,8 +265,13 @@ uv run python -m nomicronix.execution submit \
 # Cancel one order, verify the books, or flatten everything
 uv run python -m nomicronix.execution cancel --intent nx-...
 uv run python -m nomicronix.execution reconcile
+uv run python -m nomicronix.execution preflight
 uv run python -m nomicronix.execution flatten --confirm "FLATTEN NOW"
 ```
+
+`preflight` is a read-only report: live switches, credentials, spot-only, key
+permissions, clock skew and the paper-record gate in one run. Exit `0` means
+everything blocking passed; `2` lists the blockers.
 
 The committed [`config/execution.toml`](config/execution.toml) is safe by
 default: `dry_run = true`, stage `shadow`, and `allow_live = false`. Every submit
@@ -280,9 +291,9 @@ uv run pytest tests/backtesting --cov=nomicronix.backtesting --cov-fail-under=90
 uv run pytest tests/strategy_engine --cov=nomicronix.strategy_engine --cov-fail-under=90
 uv run pytest tests/signal_delivery --cov=nomicronix.signal_delivery --cov-fail-under=90
 uv run pytest tests/execution -m "not network" --cov=nomicronix.execution --cov-fail-under=90
-uv run ruff format --check src tests examples
-uv run ruff check src tests examples
-uv run mypy src/nomicronix
+uv run ruff format --check src tests examples scripts
+uv run ruff check src tests examples scripts
+uv run mypy src/nomicronix scripts/paper_cycle.py
 uv run pytest tests/market_data -m network        # opt-in, hits a real exchange
 uv run pytest tests/execution -m network          # opt-in, public ticker only
 ```
@@ -305,8 +316,9 @@ typing and a coverage floor. No CI job needs exchange credentials.
   are fixed rule scores, not calibrated probabilities, and no AI provider is
   wired yet.
 - `signal-delivery` paper fills are full and fee-free at the planned price, with
-  stops checked before targets. It has no scheduler or retry daemon, and Telegram
-  is its only remote sink. Its `readiness` command is the promotion gate for
+  stops checked before targets. It has no built-in scheduler or retry daemon, and
+  Telegram is its only remote sink; `scripts/paper_cycle.py` runs one cycle and
+  the owner schedules it. Its `readiness` command is the promotion gate for
   `execution`: at least 30 closed trades over 28 days with positive expectancy
   after assumed costs. `execution submit` enforces the same criteria from the
   delivery ledger (`--delivery-db`), so live trading cannot start on an

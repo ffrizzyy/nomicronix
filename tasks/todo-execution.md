@@ -2,7 +2,7 @@
 
 Plan: `tasks/plan-execution.md` · Spec: `SPEC-execution.md`
 
-**Status: built.** Tasks 1-8 are complete. The owner approved stages 1 and 2
+**Status: built.** Tasks 1-9 are complete. The owner approved stages 1 and 2
 (not stage 3) on 2026-11-09. `submit` now enforces the readiness criteria itself
 from the delivery ledger, but Task 0's operational checks remain open: the paper
 record still fails readiness (exit `2`), and the trade-only key/IP restriction
@@ -183,3 +183,27 @@ examples`, `uv run mypy src/nomicronix`
 
 **Files:** `src/nomicronix/execution/__main__.py`, `config/execution.toml`,
 `docs/execution.md`, `README.md`, `tests/execution/`
+
+## Phase 6: read-only preflight
+
+## Task 9: preflight report
+
+**Description:** Report every live-readiness gate in one read-only run: config
+switches, credentials, spot-only, key permissions, clock skew and the
+paper-record gate.
+
+**Acceptance criteria:**
+- [x] No order, cancel or journal write happens, and no private probe runs
+      without credentials
+- [x] Warnings (unreported permissions, missing server time) do not block;
+      failures exit `2`
+- [x] The readiness report uses the same `--cash` as `submit`
+- [x] JSON output is deterministic and includes the readiness payload
+- [x] Offline execution coverage stays above 90%
+
+**Verification:** `uv run pytest tests/execution/test_preflight.py`
+
+**Dependencies:** Tasks 1-8
+
+**Files:** `src/nomicronix/execution/preflight.py`, `adapter.py`, `__main__.py`,
+`tests/execution/test_preflight.py`, `docs/execution.md`

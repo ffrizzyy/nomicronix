@@ -3,7 +3,7 @@
 Sources: `SPEC-execution.md` (approved by owner directive: use best practice).
 Module id: `execution`. Task list: `tasks/todo-execution.md`.
 
-**Status: built for stages 1 and 2.** Tasks 1-8 are implemented and tested. The
+**Status: built for stages 1 and 2.** Tasks 1-9 are implemented and tested. The
 operational entry checks below remain open: `signal-delivery readiness` still
 exits `2`, and the trade-only key/IP restriction and owner approval of live
 stages are not recorded in this checkout. Nothing below authorizes a live order;
@@ -88,9 +88,16 @@ Arrow direction is the build order. The fake adapter mirrors the real one.
 - Checkpoint: injected unknown order and unknown position both block submits.
 
 ### Phase 5: CLI, docs and opt-in network test
-- `shadow`, `status`, `show`, `submit`, `cancel`, `reconcile`, `flatten`.
+- `shadow`, `status`, `show`, `submit`, `cancel`, `reconcile`, `preflight`,
+  `flatten`.
 - Module guide, README table, example config, CI unchanged (no keys).
 - Checkpoint: full offline suite, 90% module coverage, offline fake only.
+
+### Phase 6: read-only preflight
+- One report for the config switches, credentials, spot-only, key permissions,
+  clock skew and the paper-record gate.
+- Checkpoint: no order path or journal write; warnings do not block; failures
+  exit `2`; JSON output is deterministic.
 
 ## Risks and Mitigations
 

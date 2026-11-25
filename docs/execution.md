@@ -57,6 +57,28 @@ because it can only reduce exposure. It caps each sell at the actual exchange
 balance and skips positions that exist only in the paper book, reporting them as
 `skipped`. An incomplete flatten exits `3`.
 
+## Preflight
+
+`preflight` answers "could this host place an order right now?" without touching
+an order endpoint:
+
+```bash
+uv run python -m nomicronix.execution preflight
+uv run python -m nomicronix.execution preflight --json
+```
+
+It checks the three config switches (`dry_run`, `allow_live`, `stage`),
+credentials in the environment (masked), spot-only, key permissions when the
+exchange reports them, clock skew, and the readiness report. Exit `0` means every
+blocking check passed, `2` means at least one did not, and `1` means the config or
+input is invalid.
+
+A `[WARN]` check does not block: an exchange that does not expose permissions
+cannot be verified in code, and server time may be unavailable. Both stay manual
+dashboard checks. Preflight never places, cancels or changes an order and never
+writes the risk or execution journals. It does not run `reconcile`, which
+journals; run both before submitting.
+
 ## Credentials
 
 Environment only. The CLI never accepts keys as flags and never writes them to
@@ -96,6 +118,9 @@ uv run python -m nomicronix.execution cancel --intent nx-...
 # Compare the journal, the exchange and the risk book
 uv run python -m nomicronix.execution reconcile
 
+# Read-only live-readiness report (no order endpoint, exit 0 ready / 2 not ready)
+uv run python -m nomicronix.execution preflight
+
 # Panic button: cancel every open order, market-sell every open position
 uv run python -m nomicronix.execution flatten --confirm "FLATTEN NOW"
 ```
@@ -120,7 +145,7 @@ uv run python -m nomicronix.execution flatten --confirm "FLATTEN NOW"
 |---|---|
 | `0` | Command completed, including zero intents |
 | `1` | Invalid input, config, credentials, intent state or phrase |
-| `2` | Risk refused the signal or the submission |
+| `2` | Risk refused the signal or the submission, or `preflight` found a blocking check |
 | `3` | Exchange or reconciliation error; books are not proven consistent |
 | `4` | Live submission is disabled by the stage, config or missing `--live` |
 
@@ -252,5 +277,7 @@ The opt-in contract test reads a public ticker and cannot place an order.
 - Fill reporting to `risk-engine` and the execution journal use separate SQLite
   transactions. The durable fill key makes a replay safe, but the two writes
   remain separate commits.
+- `preflight` cannot prove the key is trade-only or IP-restricted when the
+  exchange does not expose permissions; that remains a dashboard check.
 - Stage 3 autonomy is out of scope.
 - Live trading is never risk-free. Nothing here is a profit guarantee.
