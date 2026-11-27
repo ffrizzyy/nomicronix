@@ -310,6 +310,10 @@ def _map_error(exc: Exception, operation: str) -> ExchangeError:
         code = "rate_limit"
     elif isinstance(exc, ccxt.NetworkError):
         code = "network_error"
+    elif isinstance(exc, ccxt.PermissionDenied):
+        code = "permission_denied"
+    elif isinstance(exc, ccxt.AuthenticationError):
+        code = "authentication_error"
     else:
         code = "exchange_rejected"
     return ExchangeError(f"{operation} failed: {_redact(str(exc))}", code=code)
@@ -382,7 +386,9 @@ def make_adapter(
     }
     if credentials is not None:
         options["apiKey"] = credentials[0]
-        options["apiSecret"] = credentials[1]
+        # ccxt reads "secret"; "apiSecret" is silently ignored and every signed
+        # call then fails with `requires "secret" credential`.
+        options["secret"] = credentials[1]
 
     exchange_class = getattr(ccxt, config.exchange, None)
     if exchange_class is None:

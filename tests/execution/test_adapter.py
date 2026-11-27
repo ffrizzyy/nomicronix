@@ -12,6 +12,7 @@ from nomicronix.execution.adapter import (
     _redact,
     build_adapter,
     credentials_from_env,
+    make_adapter,
     masked_key,
 )
 from nomicronix.execution.config import ExecutionConfig
@@ -261,7 +262,7 @@ def test_exchange_errors_are_redacted() -> None:
     with pytest.raises(ExchangeError) as caught:
         adapter(client).create_market_order("BTC/USDT", "buy", Decimal("1"), "nx-1")
     message = str(caught.value)
-    assert caught.value.code == "exchange_rejected"
+    assert caught.value.code == "authentication_error"
     assert "SECRETKEY" not in message
     assert "SIGNED" not in message
     assert "***" in message
@@ -456,6 +457,20 @@ def test_every_adapter_operation_maps_network_errors() -> None:
         assert caught.value.code == "network_error"
 
 
+def test_authentication_and_permission_errors_get_their_own_codes() -> None:
+    client = FakeClient()
+    client.raise_on["fetch_balance"] = ccxt.AuthenticationError("requires secret credential")
+    with pytest.raises(ExchangeError) as caught:
+        adapter(client).balances()
+    assert caught.value.code == "authentication_error"
+
+    denied = FakeClient()
+    denied.raise_on["fetch_open_orders"] = ccxt.PermissionDenied("IP not whitelisted")
+    with pytest.raises(ExchangeError) as caught:
+        adapter(denied).open_orders()
+    assert caught.value.code == "permission_denied"
+
+
 def test_an_order_without_amount_uses_the_filled_quantity() -> None:
     client = FakeClient()
     client.orders["ex-1"] = raw_order(amount=None, filled=1.0, average=100.0, status="closed")
@@ -648,7 +663,16 @@ def test_build_adapter_passes_keys_and_checks_the_clock(
         build_adapter(ExecutionConfig(), require_private=True)
     assert caught.value.code == "clock_skew"
     assert captured["apiKey"] == "abcd1234"
-    assert captured["apiSecret"] == "shh"
+    assert captured["secret"] == "shh"
+
+
+def test_make_adapter_puts_the_secret_where_ccxt_reads_it() -> None:
+    """ccxt ignores "apiSecret", so a signed call would have no secret at all."""
+
+    exchange = make_adapter(ExecutionConfig(), ("abcd1234", "shh"))
+
+    assert exchange._client.apiKey == "abcd1234"
+    assert exchange._client.secret == "shh"
 
 
 def test_build_adapter_returns_a_spot_adapter(monkeypatch: pytest.MonkeyPatch) -> None:
