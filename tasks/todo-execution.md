@@ -22,6 +22,15 @@ evaluates a signal at its own candle close, so a wide window writes months of
 paper trades in one run and does not demonstrate that the system ran for 28
 days. A replayed ledger is research, not promotion evidence.
 
+**The basket was fixed on 2026-11-27, before the first trade:** BTC/USDT,
+ETH/USDT, SOL/USDT, BNB/USDT, XRP/USDT and ADA/USDT on `1h`. Measured against
+120 days of stored candles, SmaCross(20/50) fires 221 signals across those six
+(1.84/day) versus 74 on BTC+ETH alone (0.62/day), so 30 closed trades can land
+inside a 28-day window instead of taking two to three months. The strategy, every
+threshold and every risk limit are unchanged; only the opportunity set widened.
+Do not re-pick symbols later to make the record pass — that turns the gate into
+a curve fit.
+
 **Acceptance criteria:**
 - [ ] `readiness` exits `0` and its JSON is archived (needs 30 closed paper
   trades over 28 days; cannot be fabricated)
