@@ -15,6 +15,13 @@ cannot be verified without the owner's exchange account.
 **Description:** Run the readiness gate, archive its JSON, get the risk-engine
 v1.1 partial-fill change approved, and confirm the exchange key is trade-only.
 
+**How the record must be built.** `scripts/paper_cycle.py` now scans only the
+candle that just closed; a scheduled hourly run adds at most one candle of
+evidence per hour. Do not run it with `--since` to fill the ledger: `deliver`
+evaluates a signal at its own candle close, so a wide window writes months of
+paper trades in one run and does not demonstrate that the system ran for 28
+days. A replayed ledger is research, not promotion evidence.
+
 **Acceptance criteria:**
 - [ ] `readiness` exits `0` and its JSON is archived (needs 30 closed paper
   trades over 28 days; cannot be fabricated)

@@ -5,12 +5,18 @@ the README, in a causal order:
 
 1. `market-data backfill` refreshes stored candles.
 2. `signal-delivery tick` marks open paper trades at the latest closed candle.
-3. `strategy-engine scan` proposes signals from the new candles.
+3. `strategy-engine scan` proposes signals from the candle that just closed.
 4. `signal-delivery deliver` risk-checks them, alerts and opens paper trades.
 5. `signal-delivery readiness` reports the promotion gate.
 
 Marking before delivery means a trade opened this cycle is never stopped or
 targeted on the same candle that created it.
+
+The scan window is one candle by design. `deliver` records a signal at its own
+candle close, so scanning a long window on a cold ledger would write months of
+paper trades in one run. That is a replay, not a live track record, and it must
+not be counted as evidence for the promotion gate. Pass `--since` deliberately
+when you want such a replay.
 
 Scheduling is the owner's job. One run does one cycle; a scheduler (cron, Task
 Scheduler, a timer unit) decides how often. A readiness failure is reported but
@@ -57,6 +63,7 @@ class CyclePlan:
     exchange: str
     timeframe: str
     since: str
+    backfill_since: str
     until_ms: int
     strategy: str
     params: tuple[str, ...]
@@ -71,6 +78,17 @@ class CyclePlan:
     sinks: tuple[str, ...]
     prices: tuple[tuple[str, str], ...] = ()
     api_url: str | None = None
+
+
+def live_window(now_ms: int, timeframe: Timeframe) -> tuple[str, int]:
+    """Signal window for one live cycle: exactly the candle that just closed.
+
+    Returns `(since, until)` as the scan CLI takes them: `since` is epoch
+    milliseconds, `until` is exclusive. Warm-up candles are loaded by the
+    scanner itself, so one candle is enough to evaluate a cross.
+    """
+    until_ms = now_ms // timeframe.ms * timeframe.ms
+    return str(until_ms - timeframe.ms), until_ms
 
 
 def _slug(symbol: str) -> str:
@@ -93,7 +111,7 @@ def build_steps(plan: CyclePlan) -> list[Step]:
                 "--exchange",
                 plan.exchange,
                 "--since",
-                plan.since,
+                plan.backfill_since,
                 "--db",
                 plan.market_db,
                 *(("--api-url", plan.api_url) if plan.api_url else ()),
@@ -277,8 +295,20 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--symbols", default="BTC/USDT,ETH/USDT")
     parser.add_argument("--exchange", default="binance")
     parser.add_argument("--timeframe", default="1h", choices=[item.value for item in Timeframe])
-    parser.add_argument("--since", default=None, help="UTC date; default: before --lookback-days")
-    parser.add_argument("--lookback-days", type=int, default=120)
+    parser.add_argument(
+        "--since",
+        default=None,
+        help=(
+            "UTC date to replay instead of the last closed candle; "
+            "replayed trades are recorded at their candle times"
+        ),
+    )
+    parser.add_argument(
+        "--lookback-days",
+        type=int,
+        default=120,
+        help="days of history to backfill for indicator warm-up (not the signal window)",
+    )
     parser.add_argument("--strategy", default="examples.strategy_models:SmaCross")
     parser.add_argument(
         "--param",
@@ -324,9 +354,18 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
     try:
         timeframe = Timeframe(args.timeframe)
+        if args.since is not None and args.since.isdigit():
+            raise ValueError("--since must be a UTC date (YYYY-MM-DD)")
         now = datetime.now(UTC)
-        until_ms = int(now.timestamp() * 1000) // timeframe.ms * timeframe.ms
-        since = args.since or (now.date() - timedelta(days=args.lookback_days)).isoformat()
+        now_ms = int(now.timestamp() * 1000)
+        live_since, until_ms = live_window(now_ms, timeframe)
+        scan_since = args.since or live_since
+        backfill_since = args.since or (now.date() - timedelta(days=args.lookback_days)).isoformat()
+        if args.since:
+            print(
+                "note: --since is a replay; trades are recorded at their candle times, "
+                "not as a live track record"
+            )
         symbols = tuple(item.strip() for item in args.symbols.split(",") if item.strip())
         if not symbols:
             raise ValueError("at least one symbol is required")
@@ -340,7 +379,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             symbols=symbols,
             exchange=args.exchange,
             timeframe=timeframe.value,
-            since=since,
+            since=scan_since,
+            backfill_since=backfill_since,
             until_ms=until_ms,
             strategy=args.strategy,
             params=params,

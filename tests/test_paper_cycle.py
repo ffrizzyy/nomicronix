@@ -20,6 +20,7 @@ def plan(**overrides: object) -> object:
         "exchange": "binance",
         "timeframe": "1h",
         "since": "2026-01-01",
+        "backfill_since": "2026-01-01",
         "until_ms": 1_735_689_600_000,
         "strategy": "examples.strategy_models:SmaCross",
         "params": ("fast=20", "slow=50"),
@@ -141,3 +142,37 @@ def test_an_unsupported_timeframe_is_rejected() -> None:
         paper_cycle.main(["--dry-run", "--timeframe", "3m"])
 
     assert exit_code.value.code == 2
+
+
+def test_live_window_is_exactly_the_last_closed_candle() -> None:
+    timeframe = paper_cycle.Timeframe("1h")
+    candle_open = 1_735_689_600_000
+    now_ms = candle_open + 3_600_000 + 120_000  # two minutes into the next candle
+
+    since, until = paper_cycle.live_window(now_ms, timeframe)
+
+    assert until == candle_open + 3_600_000
+    assert since == str(candle_open)
+
+
+def test_backfill_and_scan_keep_separate_windows() -> None:
+    steps = paper_cycle.build_steps(plan(backfill_since="2026-07-30", since="1795752000000"))
+    backfill = next(step for step in steps if step.name == "backfill")
+    scan = next(step for step in steps if step.name == "scan BTC/USDT")
+
+    assert "2026-07-30" in backfill.args
+    assert "1795752000000" in scan.args
+
+
+def test_an_explicit_since_is_announced_as_a_replay(capsys) -> None:
+    code = paper_cycle.main(["--dry-run", "--symbols", "BTC/USDT", "--since", "2026-01-01"])
+
+    assert code == 0
+    assert "replay" in capsys.readouterr().out
+
+
+def test_an_epoch_since_is_rejected(capsys) -> None:
+    code = paper_cycle.main(["--dry-run", "--since", "1795752000000"])
+
+    assert code == 1
+    assert "YYYY-MM-DD" in capsys.readouterr().err

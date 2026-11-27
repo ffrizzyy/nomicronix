@@ -169,23 +169,34 @@ created it.
 # Print every command without running it
 uv run python scripts/paper_cycle.py --dry-run
 
-# One real cycle (defaults: BTC/USDT and ETH/USDT on 1h, 120-day lookback)
+# One live cycle (defaults: BTC/USDT and ETH/USDT on 1h). It backfills 120 days
+# of warm-up but scans only the candle that just closed.
 uv run python scripts/paper_cycle.py
 
 # Same, where api.binance.com is blocked but the spot mirror is reachable
 uv run python scripts/paper_cycle.py --api-url https://data-api.binance.vision/api/v3
+
+# Replay a historical window into the paper ledger (research only). The store
+# needs warm-up candles before this date; backfill them first if it does not.
+uv run python scripts/paper_cycle.py --since 2026-07-30
 ```
+
+**A replay is not live evidence.** `deliver` evaluates a signal at its own candle
+close, so a wide `--since` writes weeks or months of paper trades in a single run.
+That is useful for research, but it does not show that the system ran for 28 days.
+Only live cycles, each scanning the just-closed candle, count toward the
+promotion gate; do not hand a replayed ledger to `readiness`.
 
 Cron on a UTC host:
 
 ```cron
-5 * * * * cd /srv/nomicronix && uv run python scripts/paper_cycle.py >> data/paper-cycle.log 2>&1
+1 * * * * cd /srv/nomicronix && uv run python scripts/paper_cycle.py >> data/paper-cycle.log 2>&1
 ```
 
 Windows Task Scheduler:
 
 ```powershell
-schtasks /Create /SC HOURLY /TN "Nomicronix paper cycle" /TR "cmd /c cd /d D:\path\to\nomicronix && uv run python scripts\paper_cycle.py" /ST 00:05
+schtasks /Create /SC HOURLY /TN "Nomicronix paper cycle" /TR "cmd /c cd /d D:\path\to\nomicronix && uv run python scripts\paper_cycle.py" /ST 00:01
 ```
 
 A readiness exit `2` is reported but does not fail the cycle, because the gate is
