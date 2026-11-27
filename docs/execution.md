@@ -79,6 +79,33 @@ dashboard checks. Preflight never places, cancels or changes an order and never
 writes the risk or execution journals. It does not run `reconcile`, which
 journals; run both before submitting.
 
+### Key permissions
+
+ccxt has no permission probe for Binance, so the adapter reads the signed
+account-restrictions endpoint (`GET /sapi/v1/account/apiRestrictions`) and maps
+the dashboard switches: `enableWithdrawals` becomes `withdraw`,
+`enableSpotAndMarginTrading` becomes `spot-and-margin`. A key that can withdraw
+is refused before any order path is built. If the probe is unavailable the check
+is a warning, since no code can answer the question; if the probe *fails*, the
+check fails — an unverified key is not trusted with an order.
+
+### When the trading API is blocked
+
+The public market-data mirror (`data-api.binance.vision`) serves candles and
+ticker snapshots, but private endpoints — account, order, cancel — exist only on
+`api.binance.com` and its `api1`–`api4` siblings. On a network where those hosts
+are unreachable, preflight reports:
+
+```
+[FAIL] clock-skew: the binance trading API is unreachable from this machine
+       (network_error); no live order can be placed from here and the clock was
+       not measured
+```
+
+That is not a clock problem and no key fixes it: run execution on a host that can
+reach the trading API. Paper trading still works through the mirror, because the
+paper loop never calls a private endpoint.
+
 ## Credentials
 
 Environment only. The CLI never accepts keys as flags and never writes them to
@@ -90,9 +117,11 @@ export NOMICRONIX_BINANCE_API_SECRET=...
 ```
 
 Use a **trade-only** key with withdrawals disabled, restricted to the host's IP.
-When the exchange exposes permissions, startup refuses a key that can withdraw.
-When it does not, the CLI still prints a trade-only reminder on every private
-command. Only the last four characters of the key are shown.
+When the exchange exposes permissions, startup refuses a key that can withdraw;
+when the probe fails, startup refuses too, because the key is unverified. Only
+when the exchange exposes no permission endpoint at all does the CLI fall back to
+printing a trade-only reminder on every private command. Only the last four
+characters of the key are ever shown.
 
 Public commands (`shadow`, `status`, `show`) need no credentials. `preflight`
 also runs without them, reporting the missing key as a blocking check instead of
@@ -279,7 +308,9 @@ The opt-in contract test reads a public ticker and cannot place an order.
 - Fill reporting to `risk-engine` and the execution journal use separate SQLite
   transactions. The durable fill key makes a replay safe, but the two writes
   remain separate commits.
-- `preflight` cannot prove the key is trade-only or IP-restricted when the
-  exchange does not expose permissions; that remains a dashboard check.
+- `preflight` verifies withdrawals are disabled through Binance's account
+  restrictions endpoint. IP restriction is reported by the exchange but not
+  enforced by this code, so the dashboard pin remains a manual check. If the
+  permission probe fails, the key is unverified and preflight blocks.
 - Stage 3 autonomy is out of scope.
 - Live trading is never risk-free. Nothing here is a profit guarantee.

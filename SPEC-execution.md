@@ -102,9 +102,12 @@ These are the reason the module exists. Each is enforced, not documented away.
    intent. Never chase.
 6. **Spot only.** Exchange market type is fixed to `spot`; a configuration that
    selects another market type fails at startup.
-7. **Trade-only keys.** Withdrawals must be disabled on the key. Startup checks
-   the key's permissions when the exchange exposes them and otherwise prints a
-   reminder that cannot be skipped silently.
+7. **Trade-only keys.** Withdrawals must be disabled on the key. Startup reads
+   the key's permissions where the exchange exposes them — Binance reports the
+   dashboard switches on `GET /sapi/v1/account/apiRestrictions` — and refuses a
+   key that can withdraw. If that probe fails, the key is unverified and startup
+   refuses; a reminder is printed only when the exchange has no permission
+   endpoint at all.
 8. **Fail closed.** Unknown order status, unknown balance, failed reconciliation,
    missing credentials or a network error all stop the command. Nothing is
    treated as filled because it probably filled.

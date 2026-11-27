@@ -161,7 +161,7 @@ def _key_permissions(adapter: ExchangeAdapter | None, *, key_present: bool) -> P
         return PreflightCheck(
             name="key-permissions",
             status=FAIL,
-            detail=_error_detail("not checked", exc),
+            detail=_error_detail("could not read the key's permissions", exc),
         )
     if permissions & _WITHDRAW_PERMISSIONS:
         return PreflightCheck(
@@ -174,8 +174,8 @@ def _key_permissions(adapter: ExchangeAdapter | None, *, key_present: bool) -> P
             name="key-permissions",
             status=WARN,
             detail=(
-                "the exchange did not report permissions; confirm withdrawals are disabled "
-                "and the host IP is pinned in the exchange dashboard"
+                "this exchange client exposes no permission endpoint; confirm withdrawals "
+                "are disabled and the host IP is pinned in the exchange dashboard"
             ),
         )
     return PreflightCheck(
@@ -199,10 +199,17 @@ def _clock(
     try:
         server_time = adapter.server_time_ms()
     except Exception as exc:
+        detail = _error_detail("not checked", exc)
+        if getattr(exc, "code", None) == "network_error":
+            detail = (
+                f"the {config.exchange} trading API is unreachable from this machine "
+                "(network_error); no live order can be placed from here and the clock "
+                "was not measured"
+            )
         return PreflightCheck(
             name="clock-skew",
             status=FAIL,
-            detail=_error_detail("not checked", exc),
+            detail=detail,
         )
     if server_time is None:
         return PreflightCheck(

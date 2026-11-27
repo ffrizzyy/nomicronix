@@ -5,8 +5,8 @@ Plan: `tasks/plan-execution.md` · Spec: `SPEC-execution.md`
 **Status: built.** Tasks 1-9 are complete. The owner approved stages 1 and 2
 (not stage 3) on 2026-11-09. `submit` now enforces the readiness criteria itself
 from the delivery ledger, but Task 0's operational checks remain open: the paper
-record still fails readiness (exit `2`), and the trade-only key/IP restriction
-cannot be verified without the owner's exchange account.
+record still fails readiness (exit `2`), and live execution cannot run on the
+current host because `api.binance.com` is unreachable from it (see below).
 
 ## Phase 0: gate and prerequisites
 
@@ -27,6 +27,11 @@ days. A replayed ledger is research, not promotion evidence.
   trades over 28 days; cannot be fabricated)
 - [x] The risk-engine v1.1 partial-fill contract is approved and implemented
 - [ ] Withdrawals are disabled and the key is IP-restricted (owner/exchange-only)
+  — the owner created and loaded a key on 2026-11-27. It cannot be verified from
+  this machine: every trading host (`api.binance.com`, `api1`–`api4`) times out
+  here, so the signed permission probe fails. Only the public data mirror is
+  reachable. Re-run `execution preflight` on a host that can reach the trading
+  API; it now refuses an unverified key instead of assuming one.
 - [x] The owner approves stages 1 and 2, not stage 3 (2026-11-09)
 - [x] `submit` enforces readiness in-process via `require_readiness` and
   `--delivery-db`, failing closed if no checker is available

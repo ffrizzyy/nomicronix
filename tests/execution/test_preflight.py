@@ -8,7 +8,7 @@ import pytest
 
 import nomicronix.execution.__main__ as cli
 from nomicronix.execution.config import ExecutionConfig
-from nomicronix.execution.models import utc_now_ms
+from nomicronix.execution.models import ExchangeError, utc_now_ms
 from nomicronix.execution.preflight import FAIL, PASS, WARN, evaluate_preflight
 from nomicronix.signal_delivery.readiness import CriterionResult, ReadinessReport
 from tests.execution.fakes import NOW_MS, FakeAdapter
@@ -136,6 +136,48 @@ def test_a_skewed_clock_blocks() -> None:
 
     assert report.ready is False
     assert check_status(report, "clock-skew") == FAIL
+
+
+def test_an_unreachable_trading_api_is_named_in_the_clock_check() -> None:
+    adapter = FakeAdapter(permissions={"read"})
+
+    def unreachable() -> int:
+        raise ExchangeError("fetch_time failed: offline", code="network_error")
+
+    adapter.server_time_ms = unreachable  # type: ignore[method-assign]
+
+    report = evaluate_preflight(
+        live_config(),
+        key_present=True,
+        key_hint="***1234",
+        adapter=adapter,
+        readiness=ready_report(),
+        now_ms=NOW_MS,
+    )
+
+    detail = next(check.detail for check in report.checks if check.name == "clock-skew")
+    assert check_status(report, "clock-skew") == FAIL
+    assert "unreachable" in detail
+    assert "network_error" in detail
+
+
+def test_an_unverifiable_key_blocks_instead_of_warning() -> None:
+    adapter = FakeAdapter(permissions=set())
+    adapter.failures["fetch_permissions"] = ExchangeError(
+        "fetch_permissions failed: offline", code="network_error"
+    )
+
+    report = evaluate_preflight(
+        live_config(),
+        key_present=True,
+        key_hint="***1234",
+        adapter=adapter,
+        readiness=ready_report(),
+        now_ms=NOW_MS,
+    )
+
+    assert report.ready is False
+    assert check_status(report, "key-permissions") == FAIL
 
 
 def test_missing_server_time_only_warns() -> None:

@@ -28,6 +28,7 @@ class FakeClient:
         self.raise_on: dict[str, Exception] = {}
         self.permissions_supported = True
         self.permissions: set[str] = {"spot", "withdraw"}
+        self.account_restrictions: dict[str, object] | None = None
         self.options: dict[str, object] = {"defaultType": "spot"}
         self.time_ms: int | None = NOW_MS
         self.balance = {
@@ -115,6 +116,12 @@ class FakeClient:
             raise ccxt.NotSupported("permissions are not exposed")
         self._raise("fetch_permissions")
         return {"permissions": sorted(self.permissions)}
+
+    def sapi_get_account_apirestrictions(self) -> dict[str, object]:
+        self._raise("account_restrictions")
+        if self.account_restrictions is None:
+            raise ccxt.NotSupported("account restrictions are not exposed")
+        return {"info": dict(self.account_restrictions)}
 
     def fetch_time(self) -> int:
         self._raise("fetch_time")
@@ -388,10 +395,43 @@ def test_permissions_return_an_empty_set_when_absent_or_malformed() -> None:
     assert adapter(malformed).fetch_permissions() == set()
 
 
-def test_permission_probe_errors_are_treated_as_unknown() -> None:
+def test_permission_probe_errors_fail_closed() -> None:
     client = FakeClient()
     client.raise_on["fetch_permissions"] = ccxt.NetworkError("offline")
-    assert adapter(client).fetch_permissions() == set()
+    with pytest.raises(ExchangeError) as caught:
+        adapter(client).fetch_permissions()
+    assert caught.value.code == "network_error"
+
+
+def test_binance_dashboard_restrictions_verify_a_trade_only_key() -> None:
+    client = FakeClient()
+    client.fetch_permissions = None  # type: ignore[assignment]
+    client.account_restrictions = {
+        "ipRestrict": True,
+        "enableReading": True,
+        "enableSpotAndMarginTrading": True,
+        "enableWithdrawals": False,
+    }
+
+    assert adapter(client).fetch_permissions() == {"read", "spot-and-margin"}
+
+
+def test_a_withdrawal_switch_in_the_dashboard_restrictions_blocks() -> None:
+    client = FakeClient()
+    client.fetch_permissions = None  # type: ignore[assignment]
+    client.account_restrictions = {"enableReading": True, "enableWithdrawals": True}
+
+    assert "withdraw" in adapter(client).fetch_permissions()
+
+
+def test_a_restrictions_probe_error_is_not_reported_as_unverifiable() -> None:
+    client = FakeClient()
+    client.fetch_permissions = None  # type: ignore[assignment]
+    client.raise_on["account_restrictions"] = ccxt.NetworkError("offline")
+
+    with pytest.raises(ExchangeError) as caught:
+        adapter(client).fetch_permissions()
+    assert caught.value.code == "network_error"
 
 
 def test_every_adapter_operation_maps_network_errors() -> None:

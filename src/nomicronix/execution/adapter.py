@@ -121,19 +121,50 @@ class CcxtAdapter:
         )
 
     def fetch_permissions(self) -> set[str]:
+        """Report what the key may do, so a withdrawal key is refused outright.
+
+        Tries the generic ccxt probe first. Binance does not implement it, so the
+        fallback reads the dashboard switches from the signed account
+        restrictions endpoint (`enableWithdrawals` and friends). An empty set
+        means the exchange exposes neither: the caller warns and the trade-only
+        rule stays a manual dashboard check. A probe that *fails* raises, because
+        an unverified key must not be trusted with an order.
+        """
+        permissions = self._ccxt_permissions()
+        if permissions:
+            return permissions
+        return self._dashboard_permissions()
+
+    def _ccxt_permissions(self) -> set[str]:
         method = getattr(self._client, "fetch_permissions", None)
         if method is None:
             return set()
         try:
             raw = method()
-        except Exception:
-            # The exchange does not expose permissions, or the probe failed.
-            # The caller prints a reminder and the trade-only key rule stands.
-            return set()
+        except Exception as exc:
+            import ccxt
+
+            if isinstance(exc, ccxt.NotSupported):
+                return set()
+            raise _map_error(exc, "fetch_permissions") from exc
         values = raw.get("permissions") if isinstance(raw, dict) else raw
         if not isinstance(values, (list, tuple, set)):
             return set()
         return {str(value).lower() for value in values}
+
+    def _dashboard_permissions(self) -> set[str]:
+        method = _restriction_method(self._client)
+        if method is None:
+            return set()
+        try:
+            raw = method()
+        except Exception as exc:
+            import ccxt
+
+            if isinstance(exc, ccxt.NotSupported):
+                return set()
+            raise _map_error(exc, "account_restrictions") from exc
+        return _permissions_from_restrictions(raw)
 
     def create_market_order(
         self, symbol: str, side: str, quantity: Decimal, client_order_id: str
@@ -282,6 +313,41 @@ def _map_error(exc: Exception, operation: str) -> ExchangeError:
     else:
         code = "exchange_rejected"
     return ExchangeError(f"{operation} failed: {_redact(str(exc))}", code=code)
+
+
+def _restriction_method(client: Any) -> Any:
+    """The signed account-restrictions call, in either ccxt naming style."""
+    for name in (
+        "sapi_get_account_apirestrictions",
+        "sapiGetAccountApiRestrictions",
+        "sapiGetAccountApirestrictions",
+    ):
+        method = getattr(client, name, None)
+        if callable(method):
+            return method
+    return None
+
+
+def _permissions_from_restrictions(raw: Any) -> set[str]:
+    """Map Binance's dashboard switches onto permission names.
+
+    The payload is `{ipRestrict, enableReading, enableWithdrawals,
+    enableSpotAndMarginTrading, enableMargin, ...}`, either bare or under
+    `info`.
+    """
+    data: Any = raw.get("info") if isinstance(raw, dict) else None
+    if not isinstance(data, dict):
+        data = raw if isinstance(raw, dict) else {}
+    permissions: set[str] = set()
+    if data.get("enableWithdrawals") is True:
+        permissions.add("withdraw")
+    if data.get("enableReading") is True:
+        permissions.add("read")
+    if data.get("enableSpotAndMarginTrading") is True:
+        permissions.add("spot-and-margin")
+    if data.get("enableMargin") is True:
+        permissions.add("margin")
+    return permissions
 
 
 def credentials_from_env() -> tuple[str, str]:
