@@ -171,6 +171,9 @@ uv run python scripts/paper_cycle.py --dry-run
 
 # One real cycle (defaults: BTC/USDT and ETH/USDT on 1h, 120-day lookback)
 uv run python scripts/paper_cycle.py
+
+# Same, where api.binance.com is blocked but the spot mirror is reachable
+uv run python scripts/paper_cycle.py --api-url https://data-api.binance.vision/api/v3
 ```
 
 Cron on a UTC host:

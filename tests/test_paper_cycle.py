@@ -63,6 +63,19 @@ def test_tick_is_omitted_without_a_price() -> None:
     assert names(steps)[0] == "backfill"
 
 
+def test_backfill_carries_the_optional_api_url() -> None:
+    steps = paper_cycle.build_steps(plan(api_url="https://data-api.binance.vision/api/v3"))
+    backfill = next(step for step in steps if step.name == "backfill")
+
+    assert backfill.args[-2:] == ("--api-url", "https://data-api.binance.vision/api/v3")
+
+
+def test_backfill_omits_the_api_url_when_unset() -> None:
+    steps = paper_cycle.build_steps(plan())
+
+    assert "--api-url" not in next(step for step in steps if step.name == "backfill").args
+
+
 def test_scan_and_deliver_carry_the_shared_databases() -> None:
     steps = paper_cycle.build_steps(plan())
     scan = next(step for step in steps if step.name == "scan BTC/USDT")

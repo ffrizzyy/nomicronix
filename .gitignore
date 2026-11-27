@@ -4,6 +4,9 @@ data/*
 *.sqlite
 *.sqlite3
 
+# Generated scan, backtest and walk-forward output
+results/
+
 # Python
 __pycache__/
 *.pyc

@@ -70,6 +70,7 @@ class CyclePlan:
     cash: str
     sinks: tuple[str, ...]
     prices: tuple[tuple[str, str], ...] = ()
+    api_url: str | None = None
 
 
 def _slug(symbol: str) -> str:
@@ -95,6 +96,7 @@ def build_steps(plan: CyclePlan) -> list[Step]:
                 plan.since,
                 "--db",
                 plan.market_db,
+                *(("--api-url", plan.api_url) if plan.api_url else ()),
             ),
         )
     ]
@@ -286,6 +288,13 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--min-confidence", default="0.5")
     parser.add_argument("--ttl", default="5m")
+    parser.add_argument(
+        "--api-url",
+        default=None,
+        help=(
+            "market-data spot base URL (binance only), e.g. https://data-api.binance.vision/api/v3"
+        ),
+    )
     parser.add_argument("--market-db", default="data/market.sqlite")
     parser.add_argument("--delivery-db", default="data/delivery.sqlite")
     parser.add_argument("--risk-db", default="data/risk.sqlite")
@@ -345,6 +354,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             cash=args.cash,
             sinks=tuple(args.sink) if args.sink else ("console", "jsonl"),
             prices=prices,
+            api_url=args.api_url,
         )
     except (ValueError, OSError) as exc:
         print(f"error: {exc}", file=sys.stderr)
