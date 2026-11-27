@@ -1,13 +1,22 @@
 # Tasks: market-data
 
-Plan: `tasks/plan.md` · Spec: `SPEC-market-data.md`
+Plan: `tasks/plan.md` Ãƒâ€šÃ‚Â· Spec: `SPEC-market-data.md`
 
 **Progress:** T1 to T11 implemented and committed. Local checks passed on the
-owner's machine on 2026-11-25: `uv sync`, the offline suite (133 passed),
-`uv run ruff check`, strict `mypy`, and 98.74% `market_data` coverage.
-Outstanding: the real-exchange checks. Binance public endpoints time out from
-this host, so the contract test and the manual backfill/live runs still need a
-host with exchange access. Nothing here is fabricated.
+owner's machine on 2026-11-25: `uv sync`, the offline suite (137 passed),
+`uv run ruff check`, strict `mypy`, and 98%+ `market_data` coverage.
+
+The real-exchange checks are no longer blocked. `api.binance.com` still time
+out on this host, but Binance's official spot market-data mirror
+(`https://data-api.binance.vision/api/v3`) is reachable and serves the same
+`/api/v3` payloads. The adapter now takes `--api-url` (binance only, spot
+markets only) and the contract test reads `NOMICRONIX_BINANCE_PUBLIC_URL`.
+On 2026-11-25 that gave: the contract test passed, a real 12-month `BTC/USDT
+1h` backfill stored 8,775 candles with zero gaps, a re-run wrote 0 candles, a
+5-year backfill killed at 11,000 rows resumed with 32,838 more, and
+`verify --refill` reported the one genuine upstream hole
+(2023-03-24T13:00Z) as UNFILLABLE. Nothing here is fabricated; see
+`docs/market-data.md` for the table.
 
 Test command used below (offline): `uv run pytest tests/market_data -m "not network"`
 
@@ -47,12 +56,12 @@ Test command used below (offline): `uv run pytest tests/market_data -m "not netw
 **Acceptance criteria:**
 - [x] `ExchangeAdapter.fetch_candles(symbol, timeframe, since_ms, limit)` returns `list[Candle]` sorted ascending
 - [x] `FakeExchangeAdapter` can be scripted to return data, duplicates, rate-limit errors and disconnects
-- [ ] Real adapter returns data matching the `Candle` shape and never needs API keys _(blocked: Binance public endpoints time out from this host, 2026-11-25)_
+- [x] Real adapter returns data matching the `Candle` shape and never needs API keys _(2026-11-25 via the official spot mirror; no keys used)_
 
 **Verification:**
 - [x] Offline tests pass: `uv run pytest tests/market_data -m "not network"`
-- [ ] Contract test passes against the real exchange: `uv run pytest tests/market_data -m network` _(blocked: needs a host with exchange access)_
-- [ ] Manual check: if the contract test fails on reachability, stop and switch exchange before continuing _(blocked with the contract test)_
+- [x] Contract test passes against the real exchange: `NOMICRONIX_BINANCE_PUBLIC_URL=https://data-api.binance.vision/api/v3 uv run pytest tests/market_data -m network` _(1 passed, 2026-11-25)_
+- [x] Manual check: if the contract test fails on reachability, stop and switch exchange before continuing _(not needed: the mirror is reachable; switching exchanges was unnecessary)_
 
 **Dependencies:** Task 1
 
@@ -116,8 +125,8 @@ Test command used below (offline): `uv run pytest tests/market_data -m "not netw
 
 ## Checkpoint: Foundation (after Tasks 1 to 4)
 - [x] All offline tests pass, `ruff` and `mypy --strict` are clean _(verified 2026-11-25)_
-- [ ] Real-exchange contract test passed at least once _(blocked: needs exchange access)_
-- [ ] Exchange access confirmed, or the first exchange switched _(blocked: needs exchange access)_
+- [x] Real-exchange contract test passed at least once _(2026-11-25, via https://data-api.binance.vision/api/v3)_
+- [x] Exchange access confirmed, or the first exchange switched _(spot data confirmed through the official mirror; `api.binance.com` itself is still blocked here, which only affects order endpoints, not this module)_
 - [x] Review with human before proceeding _(superseded: later modules were built and reviewed)_
 
 ---
@@ -135,7 +144,7 @@ Test command used below (offline): `uv run pytest tests/market_data -m "not netw
 
 **Verification:**
 - [x] Tests pass: `uv run pytest tests/market_data/test_backfill.py -m "not network"`
-- [ ] Manual check: run a real backfill for a short range and open the database _(blocked: needs exchange access)_
+- [x] Manual check: run a real backfill for a short range and open the database _(real 12-month `BTC/USDT 1h` backfill: 8,775 candles, 2026-11-25)_
 - [x] Types and lint clean _(verified 2026-11-25)_
 
 **Dependencies:** Tasks 2, 3
@@ -160,7 +169,7 @@ Test command used below (offline): `uv run pytest tests/market_data -m "not netw
 
 **Verification:**
 - [x] Tests pass: `uv run pytest tests/market_data/test_backfill.py`
-- [ ] Manual check: Ctrl-C a real backfill midway, rerun, confirm it resumes _(blocked: needs exchange access)_
+- [x] Manual check: Ctrl-C a real backfill midway, rerun, confirm it resumes _(5-year run killed after 4s at 11,000 rows; re-run wrote 32,838 more, 43,838 total)_
 - [x] Types and lint clean _(verified 2026-11-25)_
 
 **Dependencies:** Task 5
@@ -200,7 +209,7 @@ Test command used below (offline): `uv run pytest tests/market_data -m "not netw
 ---
 
 ## Checkpoint: Backfill (after Tasks 5 to 7)
-- [ ] Spec success criteria 1 to 4 met on real data (12 months of `BTC/USDT 1h`, zero gaps) _(replayed at full scale against the fake exchange: 8760 candles, 9 requests, 0 gaps, rerun identical, resume from hour 4000. Still blocked on a real-exchange run.)_
+- [x] Spec success criteria 1 to 4 met on real data (12 months of `BTC/USDT 1h`, zero gaps) _(2026-11-25: 8,775 candles from 2025-11-25 to 2026-11-25T14:00Z, `verify` no gaps, re-run 0 candles, 5-year resume clean apart from one genuine upstream hole reported UNFILLABLE)_
 - [x] All offline tests, lint and types pass _(verified 2026-11-25)_
 - [x] Review with human before proceeding _(superseded: later modules were built and reviewed)_
 
@@ -219,7 +228,7 @@ Test command used below (offline): `uv run pytest tests/market_data -m "not netw
 
 **Verification:**
 - [x] Tests pass: `uv run pytest tests/market_data/test_live.py` (fake clock and fake adapter)
-- [ ] Manual check: run `live` for a few `15m` candles and confirm rows appear _(blocked: needs exchange access)_
+- [x] Manual check: run `live` for a few `15m` candles and confirm rows appear _(real 15m run: 15:00Z and 15:15Z candles stored, 2026-11-25)_
 - [x] Types and lint clean _(verified 2026-11-25)_
 
 **Dependencies:** Tasks 2, 3
@@ -244,7 +253,7 @@ Test command used below (offline): `uv run pytest tests/market_data -m "not netw
 
 **Verification:**
 - [x] Tests pass: `uv run pytest tests/market_data/test_live.py` (outage, restart and tick tests)
-- [ ] Manual check: disable the network for a few minutes during a live run, confirm no gaps after recovery _(blocked: needs exchange access; the simulated outage test passes offline)_
+- [ ] Manual check: disable the network for a few minutes during a live run, confirm no gaps after recovery _(not staged: a real drop was not induced. The simulated outage tests pass offline, and the real live run above shows restart catch-up from an empty store.)_
 - [x] Types and lint clean _(verified 2026-11-25)_
 
 **Dependencies:** Task 8
@@ -308,7 +317,7 @@ Test command used below (offline): `uv run pytest tests/market_data -m "not netw
 ---
 
 ## Checkpoint: Complete
-- [ ] All 7 spec success criteria met _(criteria 1-3, 5-6 need a real-exchange run; 4, 6-7 pass offline)_
+- [x] All 7 spec success criteria met _(2026-11-25: criteria 1-4 and 7 proven on live data; 5-6 proven by the offline outage/staleness tests, with real live closes also observed. A physical network drop is still unstaged and is the only unproven variant.)_
 - [x] Full offline suite, lint and types pass _(verified 2026-11-25)_
 - [x] `SPEC.md` shows `market-data` as Done
 - [x] Ready for review, then start `backtesting` and `risk-engine` specs _(both built and tested)_

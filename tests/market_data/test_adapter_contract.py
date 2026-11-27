@@ -3,6 +3,7 @@
 Never runs by default. Run manually:  uv run pytest tests/market_data -m network
 """
 
+import os
 from decimal import Decimal
 
 import pytest
@@ -11,11 +12,13 @@ from nomicronix.market_data.adapter import CcxtAdapter
 from tests.market_data.fakes import JAN_1_2025_MS
 
 HOUR_MS = 3_600_000
+# Set this where api.binance.com is unreachable but the spot mirror is not.
+PUBLIC_URL_ENV = "NOMICRONIX_BINANCE_PUBLIC_URL"
 
 
 @pytest.mark.network
 def test_binance_returns_well_formed_hourly_candles() -> None:
-    adapter = CcxtAdapter("binance")
+    adapter = CcxtAdapter("binance", public_data_url=os.environ.get(PUBLIC_URL_ENV))
 
     candles = adapter.fetch_candles("BTC/USDT", "1h", since_ms=JAN_1_2025_MS, limit=24)
 

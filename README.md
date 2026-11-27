@@ -55,6 +55,8 @@ uv sync
 # 1. Download candles (public data, safe to re-run)
 uv run python -m nomicronix.market_data backfill \
     --symbols BTC/USDT,ETH/USDT --timeframes 1h --since 2025-01-01
+# If api.binance.com is blocked but the spot mirror is not, add:
+#   --api-url https://data-api.binance.vision/api/v3
 
 # 2. Inspect the risk account (creates data/risk.sqlite with 1,000 USDT paper cash)
 uv run python -m nomicronix.risk_engine status

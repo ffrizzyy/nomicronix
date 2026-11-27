@@ -176,19 +176,21 @@ def find_gaps(open_times_ms: list[int], step_ms: int) -> list[tuple[int, int]]:
 
 ## Verification Status (added at build time)
 
-Built with test-first development. "Offline" means the 133 tests that run without the
-network (`-m "not network"`); they passed in the build sandbox using a stand-in runner,
-because `pytest`, `ruff`, `mypy` and `ccxt` could not be installed there. Items marked
-**needs your machine** have not been run.
+Built with test-first development. "Offline" means the tests that run without the
+network (`-m "not network"`, 137 in this module); they pass on the owner's machine.
+The real-exchange checks were run on 2026-11-25 through Binance's official spot
+market-data mirror (`https://data-api.binance.vision/api/v3`), because
+`api.binance.com` is blocked on that host. The mirror serves the same `/api/v3`
+payloads; it only lacks order endpoints, which this module never uses.
 
 | # | Success criterion | Proof | Status |
 |---|---|---|---|
-| 1 | 12 months of `1h` BTC/USDT backfills with zero gaps and no duplicates | `test_twelve_months_of_hourly_candles_backfill_with_no_gaps`; `test_backfill_fills_the_store_up_to_the_last_closed_candle_across_pages` | Offline: passes. **Needs your machine:** real Binance run, then `verify --since` |
-| 2 | Running backfill twice gives identical row counts | `test_running_backfill_twice_gives_identical_rows`; `test_a_rerun_with_nothing_new_makes_no_requests` | Offline: passes |
-| 3 | An interrupted backfill resumes without re-downloading completed ranges | `test_an_interrupted_backfill_resumes_without_redownloading_stored_ranges`; `test_a_second_run_downloads_only_the_new_candles`; `test_an_earlier_since_fills_in_the_missing_start` | Offline: passes |
+| 1 | 12 months of `1h` BTC/USDT backfills with zero gaps and no duplicates | `test_twelve_months_of_hourly_candles_backfill_with_no_gaps`; `test_backfill_fills_the_store_up_to_the_last_closed_candle_across_pages` | Real, 2026-11-25: 8,775 candles 2025-11-25 to 2026-11-25T14:00Z, `verify` reported no gaps; offline unit tests also pass |
+| 2 | Running backfill twice gives identical row counts | `test_running_backfill_twice_gives_identical_rows`; `test_a_rerun_with_nothing_new_makes_no_requests` | Real, 2026-11-25: immediate re-run wrote 0 candles; offline unit tests also pass |
+| 3 | An interrupted backfill resumes without re-downloading completed ranges | `test_an_interrupted_backfill_resumes_without_redownloading_stored_ranges`; `test_a_second_run_downloads_only_the_new_candles`; `test_an_earlier_since_fills_in_the_missing_start` | Real, 2026-11-25: a 5-year run killed after 4s at 11,000 rows resumed with 32,838 more, 43,838 total; offline unit tests also pass |
 | 4 | `get_candles` is sorted, contiguous, and never includes the open candle | `test_get_candles_returns_ascending_order_even_when_written_out_of_order`; `test_upsert_rejects_a_candle_that_has_not_closed`; `test_backfill_never_stores_the_candle_that_is_still_open`; `test_update_series_never_stores_the_candle_that_is_still_open` | Offline: passes |
-| 5 | After a simulated disconnect the live updater reconnects and fills missed candles with no gaps | `test_a_three_hour_outage_in_a_simulated_day_leaves_no_gaps_and_is_reported`; `test_after_a_long_outage_the_next_tick_fills_every_missed_candle`; `test_an_outage_longer_than_the_retry_budget_does_not_crash_the_loop` | Offline: passes. **Needs your machine:** a real live run across a network drop |
+| 5 | After a simulated disconnect the live updater reconnects and fills missed candles with no gaps | `test_a_three_hour_outage_in_a_simulated_day_leaves_no_gaps_and_is_reported`; `test_after_a_long_outage_the_next_tick_fills_every_missed_candle`; `test_an_outage_longer_than_the_retry_budget_does_not_crash_the_loop` | Offline: passes. Real 15m live close checked on 2026-11-25; a real network drop has not been staged |
 | 6 | `STALE_DATA` is logged when no candle arrives for more than 2x the timeframe | `test_stale_data_is_logged_at_error_level_with_symbol_and_timeframe`; `test_the_live_loop_logs_stale_data_during_an_outage_and_recovery_after_it`; the `is_stale` tests in `test_models.py` | Offline: passes |
-| 7 | `pytest --cov-fail-under=85`, `ruff check` and `mypy` all pass | Estimated line coverage 97.8% using Python's `trace` module (not `pytest-cov`) | **Needs your machine** |
+| 7 | `pytest --cov-fail-under=85`, `ruff check` and `mypy` all pass | Real, 2026-11-25: 137 passed, `nomicronix.market_data` 99% with `pytest-cov` (adapter 100%), `ruff check` and strict `mypy` clean |
 
-Also not yet run: the real-exchange contract test (`pytest -m network`).
+The real-exchange contract test (`pytest -m network`) passed on 2026-11-25 through the spot mirror (1 passed: 24 well-formed hourly candles).

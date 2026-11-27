@@ -139,6 +139,50 @@ def test_ccxt_adapter_returns_candles_sorted_ascending() -> None:
     assert [c.open_time_ms for c in result] == [JAN_1_2025_MS, JAN_1_2025_MS + HOUR_MS]
 
 
+class StubExchangeObject:
+    """The barest ccxt exchange: only what CcxtAdapter._make_ccxt_client touches."""
+
+    def __init__(self) -> None:
+        self.urls: dict[str, dict[str, str]] = {"api": {"public": "https://api.binance.com/api/v3"}}
+
+
+def test_ccxt_adapter_points_binance_at_the_public_data_mirror(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    created: dict[str, object] = {}
+
+    def factory(config: dict[str, object]) -> StubExchangeObject:
+        created["config"] = config
+        return StubExchangeObject()
+
+    monkeypatch.setattr(ccxt, "binance", factory)
+
+    adapter = CcxtAdapter("binance", public_data_url="https://data-api.binance.vision/api/v3")
+
+    assert adapter._client.urls["api"]["public"] == "https://data-api.binance.vision/api/v3"
+    assert created["config"] == {"enableRateLimit": True, "options": {"fetchMarkets": ["spot"]}}
+
+
+def test_ccxt_adapter_leaves_the_default_endpoint_alone(monkeypatch: pytest.MonkeyPatch) -> None:
+    created: dict[str, object] = {}
+
+    def factory(config: dict[str, object]) -> StubExchangeObject:
+        created["config"] = config
+        return StubExchangeObject()
+
+    monkeypatch.setattr(ccxt, "binance", factory)
+
+    adapter = CcxtAdapter("binance")
+
+    assert adapter._client.urls["api"]["public"] == "https://api.binance.com/api/v3"
+    assert created["config"] == {"enableRateLimit": True}
+
+
+def test_ccxt_adapter_rejects_a_mirror_for_another_exchange() -> None:
+    with pytest.raises(ValueError):
+        CcxtAdapter("bybit", public_data_url="https://data-api.binance.vision/api/v3")
+
+
 def test_ccxt_adapter_maps_rate_limit_errors() -> None:
     client = StubCcxtClient(error=ccxt.RateLimitExceeded("429"))
     adapter = CcxtAdapter("binance", client=client)

@@ -275,3 +275,41 @@ def test_live_command_exits_cleanly_on_ctrl_c(tmp_path: Path) -> None:
     )
 
     assert code == 0
+
+
+def test_api_url_flag_is_forwarded_when_the_cli_builds_the_adapter(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import nomicronix.market_data.__main__ as market_main
+
+    captured: dict[str, object] = {}
+
+    class CapturingAdapter:
+        def __init__(self, exchange_id: str, *, public_data_url: str | None = None) -> None:
+            captured["exchange_id"] = exchange_id
+            captured["public_data_url"] = public_data_url
+            self.name = exchange_id
+
+    monkeypatch.setattr(market_main, "CcxtAdapter", CapturingAdapter)
+
+    code = main(
+        [
+            "verify",
+            "--symbols",
+            "BTC/USDT",
+            "--timeframes",
+            "1h",
+            "--refill",
+            "--api-url",
+            "https://data-api.binance.vision/api/v3",
+            "--db",
+            str(tmp_path / "market.sqlite"),
+        ],
+        config=make_config(),
+    )
+
+    assert code == 1  # nothing is stored yet; the point is how the adapter was built
+    assert captured == {
+        "exchange_id": "binance",
+        "public_data_url": "https://data-api.binance.vision/api/v3",
+    }

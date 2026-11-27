@@ -19,6 +19,8 @@ Public exchange endpoints only: no API keys are needed or used.
 
 All commands take `--exchange` (default `binance`, any ccxt exchange id), `--symbols`,
 `--timeframes` (comma separated) and `--db` (default `data/market.sqlite`).
+`--api-url` overrides Binance's spot public base URL; see
+[If api.binance.com is unreachable](#if-apibinancecom-is-unreachable).
 
 ```
 # Download history (safe to re-run, resumes where it stopped)
@@ -92,6 +94,47 @@ closed-only.
   reachable from your network, pass another ccxt id, e.g. `--exchange bybit` or
   `--exchange coinbase`, and run the network contract test against it first.
 
+### If api.binance.com is unreachable
+
+Some networks block `api.binance.com` while Binance's official spot market-data
+mirror stays reachable. The mirror serves the same `/api/v3` endpoints and
+payloads; it just cannot place orders, which this module never does:
+
+```
+uv run python -m nomicronix.market_data backfill \
+    --symbols BTC/USDT --timeframes 1h --since 2025-11-25 \
+    --api-url https://data-api.binance.vision/api/v3
+```
+
+`--api-url` is binance-only and keeps ccxt on spot markets (the mirror has no
+futures or options endpoints). Everything else, including `verify --refill` and
+`live`, behaves the same. To run the network contract test the same way:
+
+```
+$env:NOMICRONIX_BINANCE_PUBLIC_URL = "https://data-api.binance.vision/api/v3"   # PowerShell
+NOMICRONIX_BINANCE_PUBLIC_URL=https://data-api.binance.vision/api/v3 uv run pytest tests/market_data -m network
+```
+
+## Real-exchange verification
+
+Run on 2026-11-25 against live Binance data through the official spot mirror
+(`--api-url https://data-api.binance.vision/api/v3`), because `api.binance.com`
+is blocked on that host:
+
+| Check | Result |
+|---|---|
+| `pytest tests/market_data -m network` | 1 passed: 24 well-formed `1h` candles from 2025-01-01 |
+| `backfill --symbols BTC/USDT --timeframes 1h --since 2025-11-25` | 8,775 candles written, 2025-11-25T00:00Z to 2026-11-25T14:00Z |
+| `verify --since 2025-11-25` | no gaps, exit `0` |
+| `backfill` run again | 0 candles written, exit `0` |
+| 5-year backfill killed after 4s at 11,000 rows, then re-run | 32,838 more written, 43,838 total; no re-download |
+| `verify --since 2021-11-25 --refill` on that 5-year series | 1 gap, `UNFILLABLE`: 2023-03-24T13:00Z |
+| `live --timeframes 15m` | 2 candles stored: 15:00Z (`1636.28`) and 15:15Z (`1633.19`) |
+
+The 2023-03-24T13:00Z hole is real: Binance's own `/api/v3/klines` returns
+`12:00`, then `14:00`. `verify` reports it and `--refill` marks it unfillable
+instead of hiding it, which is the intended behaviour.
+
 ## Known limitations
 
 - **Use one process per database file.** SQLite is in its default journal mode, so a
@@ -102,8 +145,10 @@ closed-only.
 - Stopping `live` with SIGTERM (not Ctrl-C) just ends the process. That is safe, since the
   next start catches up.
 - Spot candles only. Order book depth and funding rates are out of scope for now.
-- Local checks that need the real exchange or dev tools (`ruff`, `mypy`, `pytest-cov`,
-  the `network` contract test) were not run during the build; see `SPEC-market-data.md`.
+- The contract test, a 12-month backfill, gap verification, an idempotent re-run and a
+  real `15m` live close were checked on 2026-11-25 (see above). A multi-day soak, a real
+  reconnect window and an interruption mid-backfill are still only proven against the
+  fake exchange.
 
 ## Development
 

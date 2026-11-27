@@ -32,15 +32,25 @@ class ExchangeAdapter(Protocol):
         ...
 
 
+# Binance's official spot market-data mirror. Same endpoints and payloads as
+# https://api.binance.com/api/v3, but served from a domain that is reachable in
+# networks where the main API is blocked.
+BINANCE_PUBLIC_DATA_MIRROR = "https://data-api.binance.vision/api/v3"
+
+
 class CcxtAdapter:
     """ExchangeAdapter backed by ccxt, using public endpoints only."""
 
-    def __init__(self, exchange_id: str = "binance", client: Any = None) -> None:
+    def __init__(
+        self,
+        exchange_id: str = "binance",
+        client: Any = None,
+        *,
+        public_data_url: str | None = None,
+    ) -> None:
         self.name = exchange_id
         if client is None:
-            import ccxt
-
-            client = getattr(ccxt, exchange_id)({"enableRateLimit": True})
+            client = _make_ccxt_client(exchange_id, public_data_url)
         self._client = client
 
     def fetch_candles(self, symbol: str, timeframe: str, since_ms: int, limit: int) -> list[Candle]:
@@ -57,6 +67,22 @@ class CcxtAdapter:
             raise AdapterError(str(exc)) from exc
         candles = [_row_to_candle(symbol, timeframe, row) for row in rows]
         return sorted(candles, key=lambda c: c.open_time_ms)
+
+
+def _make_ccxt_client(exchange_id: str, public_data_url: str | None) -> Any:
+    import ccxt
+
+    config: dict[str, Any] = {"enableRateLimit": True}
+    if public_data_url is not None:
+        if exchange_id != "binance":
+            raise ValueError("public_data_url is supported for binance only")
+        # The mirror serves spot candles and nothing else, so tell ccxt not to
+        # load futures/options markets from hosts this network cannot reach.
+        config["options"] = {"fetchMarkets": ["spot"]}
+    client = getattr(ccxt, exchange_id)(config)
+    if public_data_url is not None:
+        client.urls["api"]["public"] = public_data_url.rstrip("/")
+    return client
 
 
 def _row_to_candle(symbol: str, timeframe: str, row: list[Any]) -> Candle:

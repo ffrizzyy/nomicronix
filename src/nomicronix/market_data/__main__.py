@@ -34,6 +34,18 @@ def _add_series_args(command: argparse.ArgumentParser) -> None:
     command.add_argument("--symbols", type=_csv, required=True, help="e.g. BTC/USDT,ETH/USDT")
     command.add_argument("--timeframes", type=_timeframes, required=True, help="e.g. 1h,15m")
     command.add_argument("--db", default="data/market.sqlite")
+    command.add_argument(
+        "--api-url",
+        default=None,
+        help=(
+            "override the spot public API base URL (binance only); use "
+            "https://data-api.binance.vision/api/v3 where api.binance.com is blocked"
+        ),
+    )
+
+
+def _make_adapter(args: argparse.Namespace) -> ExchangeAdapter:
+    return CcxtAdapter(args.exchange, public_data_url=getattr(args, "api_url", None))
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -68,9 +80,9 @@ def main(
     args = _build_parser().parse_args(argv)
     config = config or BackfillConfig()
     if args.command == "backfill":
-        return _backfill(args, adapter or CcxtAdapter(args.exchange), config)
+        return _backfill(args, adapter or _make_adapter(args), config)
     if args.command == "live":
-        return _live(args, adapter or CcxtAdapter(args.exchange), config, should_stop)
+        return _live(args, adapter or _make_adapter(args), config, should_stop)
     return _verify(args, adapter, config)
 
 
@@ -115,7 +127,7 @@ def _live(
 def _verify(
     args: argparse.Namespace, adapter: ExchangeAdapter | None, config: BackfillConfig
 ) -> int:
-    refill_adapter = (adapter or CcxtAdapter(args.exchange)) if args.refill else None
+    refill_adapter = (adapter or _make_adapter(args)) if args.refill else None
     store = SqliteStore(args.db, adapter.name if adapter else args.exchange)
     all_ok = True
     try:
